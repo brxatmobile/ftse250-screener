@@ -10,6 +10,10 @@ FTSE 250 daily candlestick screener.
 Run manually with:  python screener.py
 Configure capital / risk % via CAPITAL and RISK_PCT below, or environment
 variables CAPITAL and RISK_PCT (used by the GitHub Actions workflow).
+
+Yahoo Finance returns London Stock Exchange equity prices in pence. Pattern
+analysis remains in pence, but monetary display, position sizing and position
+value calculations are converted to pounds.
 """
 
 import os
@@ -35,6 +39,9 @@ LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
 LSE_HOME_URL = "https://www.lse.co.uk/"
 LSE_INDICES_URL = "https://www.lse.co.uk/indices/"
 
+# Yahoo Finance normally reports London-listed equity prices in GBX (pence).
+PENCE_PER_POUND = 100.0
+
 INK = "#12161F"
 PANEL = "#1B2129"
 HAIRLINE = "#2C333D"
@@ -44,6 +51,33 @@ BULL = "#4FAE73"
 BEAR = "#D1594B"
 PAPER = "#ECE7DA"
 MUTED = "#8B92A0"
+
+
+def gbx_to_gbp(value):
+    """Convert a Yahoo Finance London-market price from pence to pounds."""
+    return float(value) / PENCE_PER_POUND
+
+
+def calculate_position_size(capital, risk_amount, entry_gbx, risk_per_share_gbx):
+    """
+    Return a whole-share position size.
+
+    The size is constrained by both:
+      1. maximum cash risk at the stop; and
+      2. available capital/notional value.
+
+    Prices supplied by Yahoo for .L equities are in pence, so both entry and
+    per-share risk are converted to pounds before sizing.
+    """
+    entry_gbp = gbx_to_gbp(entry_gbx)
+    risk_per_share_gbp = gbx_to_gbp(risk_per_share_gbx)
+
+    if entry_gbp <= 0 or risk_per_share_gbp <= 0:
+        return 0
+
+    shares_by_risk = math.floor(risk_amount / risk_per_share_gbp)
+    shares_by_capital = math.floor(capital / entry_gbp)
+    return max(0, min(shares_by_risk, shares_by_capital))
 
 
 def _make_lse_session():
@@ -106,7 +140,6 @@ def _parse_lse_constituents(page_html):
     """
     seen = {}
 
-    # Current/typical LSE share links. The link body usually ends "(EPIC)".
     anchor_pattern = re.compile(
         r"""<a\b[^>]*href=["'][^"']*
             (?:SharePrice\.html|share-prices/[^"'?]+)
@@ -120,8 +153,6 @@ def _parse_lse_constituents(page_html):
     for match in anchor_pattern.finditer(page_html):
         epic = html_lib.unescape(match.group(1)).upper().strip().rstrip(".")
         label = _clean_company_name(match.group(2))
-
-        # Remove the final ticker in brackets, e.g. "Greggs (GRG)".
         label = re.sub(
             rf"\s*\(\s*{re.escape(epic)}\.?\s*\)\s*$",
             "",
@@ -132,7 +163,6 @@ def _parse_lse_constituents(page_html):
         if epic and label and epic not in seen:
             seen[epic] = label
 
-    # Fallback for pages where the ticker is present only in the displayed text.
     if len(seen) < 100:
         display_pattern = re.compile(
             r"""<a\b[^>]*href=["'][^"']*(?:SharePrice\.html|share-prices/)[^"']*["'][^>]*>
@@ -147,7 +177,6 @@ def _parse_lse_constituents(page_html):
             if epic and name and epic not in seen:
                 seen[epic] = name
 
-    # Final fallback for embedded JSON/escaped HTML containing shareprice=.
     if len(seen) < 100:
         decoded = html_lib.unescape(page_html).replace("\\u0026", "&").replace("\\/", "/")
         query_pattern = re.compile(
@@ -177,7 +206,6 @@ def fetch_ftse250_constituents():
     session = _make_lse_session()
 
     try:
-        # Establish an ordinary navigation session and collect site cookies.
         for warmup_url, referer in (
             (LSE_HOME_URL, None),
             (LSE_INDICES_URL, LSE_HOME_URL),
@@ -198,7 +226,6 @@ def fetch_ftse250_constituents():
                     f"{warmup.url} ({len(warmup.content):,} bytes)"
                 )
             except requests.RequestException as exc:
-                # A warm-up failure is not fatal; the main request may still work.
                 print(f"  LSE warm-up warning: {exc}")
 
             time.sleep(random.uniform(0.6, 1.2))
@@ -235,10 +262,6 @@ def fetch_ftse250_constituents():
         content_type = response.headers.get("content-type", "").lower()
         content_encoding = response.headers.get("content-encoding", "").lower()
 
-        # requests transparently decodes gzip and deflate. We deliberately do
-        # not advertise Brotli ("br"), because GitHub's Python environment may
-        # not have a Brotli decoder installed. Advertising br without support
-        # can produce an HTTP 200 response whose body appears as binary noise.
         if content_encoding not in ("", "identity", "gzip", "deflate"):
             raise RuntimeError(
                 "LSE returned an unsupported compressed response: "
@@ -246,8 +269,6 @@ def fetch_ftse250_constituents():
                 "The request should only advertise gzip and deflate."
             )
 
-        # Use the server-provided encoding where possible, otherwise default
-        # to UTF-8. LSE pages are HTML and should decode to readable markup.
         if not response.encoding:
             response.encoding = response.apparent_encoding or "utf-8"
 
@@ -344,14 +365,23 @@ def detect_pattern(candles):
     if is_bull(c2) and is_bear(c3) and c3["open"] >= c2["close"] and c3["close"] <= c2["open"]:
         return {"name": "Bearish engulfing", "dir": "bear", "base": 8}
     if body(c3) > 0 and lower_wick(c3) >= body(c3) * 2 and upper_wick(c3) <= body(c3) * 0.35:
-        return {"name": "Hammer" if is_bull(c3) else "Hanging man",
-                "dir": "bull" if is_bull(c3) else "bear", "base": 6.5}
+        return {
+            "name": "Hammer" if is_bull(c3) else "Hanging man",
+            "dir": "bull" if is_bull(c3) else "bear",
+            "base": 6.5,
+        }
     if body(c3) > 0 and upper_wick(c3) >= body(c3) * 2 and lower_wick(c3) <= body(c3) * 0.35:
-        return {"name": "Shooting star" if is_bear(c3) else "Inverted hammer",
-                "dir": "bear" if is_bear(c3) else "bull", "base": 6}
+        return {
+            "name": "Shooting star" if is_bear(c3) else "Inverted hammer",
+            "dir": "bear" if is_bear(c3) else "bull",
+            "base": 6,
+        }
     if body(c3) >= rng(c3) * 0.85:
-        return {"name": "Bullish marubozu" if is_bull(c3) else "Bearish marubozu",
-                "dir": "bull" if is_bull(c3) else "bear", "base": 7}
+        return {
+            "name": "Bullish marubozu" if is_bull(c3) else "Bearish marubozu",
+            "dir": "bull" if is_bull(c3) else "bear",
+            "base": 7,
+        }
     if body(c3) <= rng(c3) * 0.08:
         return {"name": "Doji", "dir": "bull" if is_bull(c3) else "bear", "base": 3}
     return None
@@ -377,7 +407,14 @@ def analyze(epic, name, df):
     if len(df) < 16:
         return None
     candles = [
-        {"date": idx, "open": r.Open, "high": r.High, "low": r.Low, "close": r.Close, "volume": r.Volume}
+        {
+            "date": idx,
+            "open": r.Open,
+            "high": r.High,
+            "low": r.Low,
+            "close": r.Close,
+            "volume": r.Volume,
+        }
         for idx, r in df.iterrows()
     ]
     pattern = detect_pattern(candles)
@@ -395,25 +432,38 @@ def analyze(epic, name, df):
 
     score = pattern["base"] * 0.55
     if r is not None:
-        if bull and r < 35: score += 1.8
-        elif bull and r < 55: score += 0.8
-        elif bull and r > 72: score -= 1.6
-        elif not bull and r > 65: score += 1.8
-        elif not bull and r > 45: score += 0.8
-        elif not bull and r < 28: score -= 1.6
+        if bull and r < 35:
+            score += 1.8
+        elif bull and r < 55:
+            score += 0.8
+        elif bull and r > 72:
+            score -= 1.6
+        elif not bull and r > 65:
+            score += 1.8
+        elif not bull and r > 45:
+            score += 0.8
+        elif not bull and r < 28:
+            score -= 1.6
 
     if s20 is not None:
-        if bull and last["close"] > s20: score += 1.2
-        if bull and last["close"] < s20: score -= 0.8
-        if not bull and last["close"] < s20: score += 1.2
-        if not bull and last["close"] > s20: score -= 0.8
+        if bull and last["close"] > s20:
+            score += 1.2
+        if bull and last["close"] < s20:
+            score -= 0.8
+        if not bull and last["close"] < s20:
+            score += 1.2
+        if not bull and last["close"] > s20:
+            score -= 0.8
 
     vol_ratio = (last_vol / avg_vol) if avg_vol else 1.0
-    if vol_ratio > 1.5: score += 1.3
-    elif vol_ratio < 0.7: score -= 0.6
+    if vol_ratio > 1.5:
+        score += 1.3
+    elif vol_ratio < 0.7:
+        score -= 0.6
 
     score = max(0.0, min(10.0, score))
 
+    # These values remain in pence because all Yahoo .L OHLC data is in pence.
     pattern_low = min(candles[-1]["low"], candles[-2]["low"])
     pattern_high = max(candles[-1]["high"], candles[-2]["high"])
     entry = last["close"]
@@ -422,11 +472,21 @@ def analyze(epic, name, df):
     target = entry + risk_per_share * 2 if bull else entry - risk_per_share * 2
 
     return {
-        "epic": epic, "name": name, "score": score, "pattern": pattern["name"],
-        "direction": "Long" if bull else "Short", "rsi": r, "sma20": s20,
-        "vol_ratio": vol_ratio, "entry": entry, "stop": stop, "target": target,
+        "epic": epic,
+        "name": name,
+        "score": score,
+        "pattern": pattern["name"],
+        "direction": "Long" if bull else "Short",
+        "rsi": r,
+        "sma20": s20,
+        "vol_ratio": vol_ratio,
+        "entry": entry,
+        "stop": stop,
+        "target": target,
         "risk_per_share": risk_per_share,
-        "strategy": STRATEGY_TEXT.get(pattern["name"], "Trade only on confirmed follow-through."),
+        "strategy": STRATEGY_TEXT.get(
+            pattern["name"], "Trade only on confirmed follow-through."
+        ),
         "candles": candles[-10:],
     }
 
@@ -445,7 +505,10 @@ def render_html(results, capital, risk_pct, generated_at):
         def y(v):
             return h - pad - ((v - bot) / span) * (h - pad * 2)
 
-        parts = [f'<svg width="100%" viewBox="0 0 {w} {h}" preserveAspectRatio="xMidYMid meet">']
+        parts = [
+            f'<svg width="100%" viewBox="0 0 {w} {h}" '
+            f'preserveAspectRatio="xMidYMid meet">'
+        ]
         for i, c in enumerate(candles):
             cx = pad + i * cw + cw / 2
             up = c["close"] >= c["open"]
@@ -453,9 +516,11 @@ def render_html(results, capital, risk_pct, generated_at):
             body_top = y(max(c["open"], c["close"]))
             body_bot = y(min(c["open"], c["close"]))
             parts.append(
-                f'<line x1="{cx:.1f}" x2="{cx:.1f}" y1="{y(c["high"]):.1f}" y2="{y(c["low"]):.1f}" '
+                f'<line x1="{cx:.1f}" x2="{cx:.1f}" '
+                f'y1="{y(c["high"]):.1f}" y2="{y(c["low"]):.1f}" '
                 f'stroke="{color}" stroke-width="1"/>'
-                f'<rect x="{cx - cw * 0.32:.1f}" y="{body_top:.1f}" width="{cw * 0.64:.1f}" '
+                f'<rect x="{cx - cw * 0.32:.1f}" y="{body_top:.1f}" '
+                f'width="{cw * 0.64:.1f}" '
                 f'height="{max(1.4, body_bot - body_top):.1f}" fill="{color}"/>'
             )
         parts.append("</svg>")
@@ -463,9 +528,21 @@ def render_html(results, capital, risk_pct, generated_at):
 
     rows = []
     for i, r in enumerate(results):
-        shares = math.floor(risk_amount / r["risk_per_share"]) if r["risk_per_share"] > 0 else 0
-        position_value = shares * r["entry"]
+        shares = calculate_position_size(
+            capital=capital,
+            risk_amount=risk_amount,
+            entry_gbx=r["entry"],
+            risk_per_share_gbx=r["risk_per_share"],
+        )
+
+        entry_gbp = gbx_to_gbp(r["entry"])
+        stop_gbp = gbx_to_gbp(r["stop"])
+        target_gbp = gbx_to_gbp(r["target"])
+        risk_per_share_gbp = gbx_to_gbp(r["risk_per_share"])
+        position_value = shares * entry_gbp
+        planned_risk = shares * risk_per_share_gbp
         dir_color = BULL if r["direction"] == "Long" else BEAR
+
         rows.append(f"""
         <div style="background:{PANEL};border:1px solid {HAIRLINE};border-radius:8px;margin-bottom:12px;overflow:hidden;">
           <div style="display:flex;padding:16px 18px;gap:16px;align-items:center;flex-wrap:wrap;">
@@ -485,19 +562,20 @@ def render_html(results, capital, risk_pct, generated_at):
             <p style="font-size:13.5px;line-height:1.6;color:{PAPER};margin:0 0 12px;">{r['strategy']}</p>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px;">
               <div><div style="font-size:11px;color:{MUTED};">Entry (last close)</div>
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;">£{r['entry']:.2f}</div></div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;">£{entry_gbp:.2f}</div></div>
               <div><div style="font-size:11px;color:{MUTED};">Sell / stop trigger</div>
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:{BEAR};">£{r['stop']:.2f}</div></div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:{BEAR};">£{stop_gbp:.2f}</div></div>
               <div><div style="font-size:11px;color:{MUTED};">Take-profit target</div>
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:{BULL};">£{r['target']:.2f}</div></div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:{BULL};">£{target_gbp:.2f}</div></div>
             </div>
             <div style="background:{INK};border:1px solid {HAIRLINE};border-radius:6px;padding:12px 14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
               <div><div style="font-size:11px;color:{MUTED};">Suggested size</div>
-                <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;">{shares} shares &middot; ~£{position_value:.2f}</div></div>
+                <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;">{shares} shares &middot; ~£{position_value:.2f}</div>
+                <div style="font-size:10px;color:{MUTED};margin-top:3px;">Risk at stop ~£{planned_risk:.2f}</div></div>
               <div style="text-align:right;"><div style="font-size:11px;color:{MUTED};">RSI(14) / vs SMA20 / volume</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;">
                   {f"{r['rsi']:.0f}" if r['rsi'] is not None else "—"} /
-                  {"above" if (r['sma20'] is not None and r['entry']>r['sma20']) else ("below" if r['sma20'] is not None else "—")} /
+                  {"above" if (r['sma20'] is not None and r['entry'] > r['sma20']) else ("below" if r['sma20'] is not None else "—")} /
                   {r['vol_ratio']:.1f}x
                 </div></div>
             </div>
@@ -505,7 +583,10 @@ def render_html(results, capital, risk_pct, generated_at):
         </div>""")
 
     if not results:
-        rows_html = f'<div style="color:{MUTED};font-size:14px;padding:20px;text-align:center;">No qualifying candlestick setups found today.</div>'
+        rows_html = (
+            f'<div style="color:{MUTED};font-size:14px;padding:20px;'
+            f'text-align:center;">No qualifying candlestick setups found today.</div>'
+        )
     else:
         rows_html = "".join(rows)
 
@@ -531,12 +612,13 @@ body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:
     <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:{MUTED};text-align:right;">{generated_at}</div>
   </div>
   <div style="font-size:12px;color:{MUTED};margin-bottom:22px;">
-    Capital £{capital:,.0f} &middot; risking £{risk_amount:.2f} per trade ({risk_pct:g}%) &middot; screened automatically each morning from the full FTSE 250.
+    Capital £{capital:,.2f} &middot; maximum risk £{risk_amount:.2f} per trade ({risk_pct:g}%) &middot; screened automatically each morning from the full FTSE 250.
   </div>
   {rows_html}
   <p style="font-size:11.5px;color:{MUTED};line-height:1.6;margin-top:24px;border-top:1px solid {HAIRLINE};padding-top:16px;">
-    Generated automatically from public market data. This is informational and educational only, not financial advice.
-    Day trading carries a high risk of loss. Verify prices independently before placing any trade.
+    Generated automatically from public market data. London-listed Yahoo Finance prices are converted from pence to pounds for display and sizing.
+    This is informational and educational only, not financial advice. Day trading carries a high risk of loss.
+    Verify prices independently before placing any trade.
   </p>
 </div>
 </body>
@@ -554,8 +636,13 @@ def main():
 
     print("Downloading price history (this can take a minute)...")
     data = yf.download(
-        yahoo_tickers, period="2mo", interval="1d",
-        group_by="ticker", threads=True, progress=False, auto_adjust=False,
+        yahoo_tickers,
+        period="2mo",
+        interval="1d",
+        group_by="ticker",
+        threads=True,
+        progress=False,
+        auto_adjust=False,
     )
 
     results = []
@@ -570,8 +657,8 @@ def main():
         name = constituents[epic]
         try:
             r = analyze(epic, name, df)
-        except Exception as e:
-            print(f"  skipping {epic}: {e}")
+        except Exception as exc:
+            print(f"  skipping {epic}: {exc}")
             continue
         if r:
             results.append(r)
@@ -581,12 +668,14 @@ def main():
 
     print(f"Scored {len(results)} qualifying setups; writing top {len(top5)}.")
 
-    generated_at = dt.datetime.now(dt.timezone.utc).strftime("%a %d %b %Y, %H:%M UTC")
-    html = render_html(top5, CAPITAL, RISK_PCT, generated_at)
+    generated_at = dt.datetime.now(dt.timezone.utc).strftime(
+        "%a %d %b %Y, %H:%M UTC"
+    )
+    report_html = render_html(top5, CAPITAL, RISK_PCT, generated_at)
 
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-        f.write(html)
+    with open(OUTPUT_PATH, "w", encoding="utf-8") as output_file:
+        output_file.write(report_html)
     print(f"Wrote {OUTPUT_PATH}")
 
 
