@@ -1,0 +1,36 @@
+name: Run backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Number of recent trading days to test (ignored if start/end given)"
+        default: "3"
+      start:
+        description: "Start date YYYY-MM-DD (optional)"
+        default: ""
+      end:
+        description: "End date YYYY-MM-DD (optional)"
+        default: ""
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backtest
+        env:
+          CAPITAL: ${{ vars.CAPITAL }}
+          RISK_PCT: ${{ vars.RISK_PCT }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.start }}" ]; then ARGS="--start ${{ inputs.start }} --end ${{ inputs.end }}"; else ARGS="--days ${{ inputs.days }}"; fi
+          python backtest.py $ARGS
