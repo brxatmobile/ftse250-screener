@@ -17,7 +17,7 @@ converted to pounds. The completed daily candle is used only to build a
 next-session watchlist; it is not treated as an executable entry price.
 """
 
-# FILE_VERSION: OFFICIAL_LSE_PAGINATED_2026_08_01
+# FILE_VERSION: ISOLATED_STATIC_TABLE_2026_08_01
 import os
 import re
 import sys
@@ -84,190 +84,13 @@ def _clean_company_name(value):
     return value.strip(" \t\r\n-–|")
 
 
-OFFICIAL_LSE_CONSTITUENTS_URL = (
-    "https://www.londonstockexchange.com/indices/ftse-250/constituents/table"
-)
-LSE_PAGE_SIZE = 20
-LSE_EXPECTED_CONSTITUENTS = 250
-LSE_MAX_PAGES = 20
+LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
+LSE_EXPECTED_MIN = 240
+LSE_EXPECTED_MAX = 260
 
 
-class _OfficialLSETableParser(HTMLParser):
-    """Collect ordinary HTML table rows from an official LSE page."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.tables = []
-        self._table_depth = 0
-        self._table = None
-        self._row = None
-        self._cell = None
-
-    def handle_starttag(self, tag, attrs):
-        tag = tag.lower()
-        if tag == "table":
-            self._table_depth += 1
-            if self._table_depth == 1:
-                self._table = []
-        elif self._table_depth == 1 and tag == "tr":
-            self._row = []
-        elif self._table_depth == 1 and tag in {"th", "td"}:
-            self._cell = []
-
-    def handle_data(self, data):
-        if self._table_depth == 1 and self._cell is not None:
-            self._cell.append(data)
-
-    def handle_endtag(self, tag):
-        tag = tag.lower()
-        if self._table_depth == 1 and tag in {"th", "td"}:
-            if self._row is not None and self._cell is not None:
-                self._row.append(_clean_company_name("".join(self._cell)))
-            self._cell = None
-        elif self._table_depth == 1 and tag == "tr":
-            if self._table is not None and self._row:
-                self._table.append(self._row)
-            self._row = None
-        elif tag == "table":
-            if self._table_depth == 1 and self._table:
-                self.tables.append(self._table)
-                self._table = None
-            if self._table_depth:
-                self._table_depth -= 1
-
-
-def _normalise_header(value):
-    return re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
-
-
-def _valid_epic(value):
-    value = html_lib.unescape(str(value)).upper().strip()
-    value = value.removesuffix(".L").rstrip(".")
-    return value if re.fullmatch(r"[A-Z0-9.]{1,10}", value) else None
-
-
-def _rows_from_html_tables(page_html):
-    """Extract Code/Name rows from a genuine LSE constituent table."""
-    parser = _OfficialLSETableParser()
-    parser.feed(page_html)
-    parser.close()
-
-    found = []
-    for table in parser.tables:
-        if not table:
-            continue
-        header = [_normalise_header(cell) for cell in table[0]]
-        try:
-            code_idx = next(i for i, h in enumerate(header) if h == "code")
-            name_idx = next(i for i, h in enumerate(header) if h == "name")
-            currency_idx = next(i for i, h in enumerate(header) if h == "currency")
-        except StopIteration:
-            continue
-
-        # The official table also includes market cap and price columns. This
-        # prevents an unrelated two-column table from being accepted.
-        if not any("market cap" in h for h in header):
-            continue
-        if not any(h == "price" for h in header):
-            continue
-
-        for row in table[1:]:
-            if max(code_idx, name_idx, currency_idx) >= len(row):
-                continue
-            epic = _valid_epic(row[code_idx])
-            name = _clean_company_name(row[name_idx])
-            currency = str(row[currency_idx]).strip().upper()
-            if epic and name and currency in {"GBX", "GBP", "USD", "EUR"}:
-                found.append((epic, name))
-    return found
-
-
-def _walk_json(value):
-    """Yield every dictionary recursively from an embedded JSON value."""
-    if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from _walk_json(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from _walk_json(child)
-
-
-def _rows_from_embedded_json(page_html):
-    """
-    Extract rows from JSON embedded by the LSE web application.
-
-    The official site is JavaScript-driven and may not emit a literal HTML
-    table to non-browser clients. Its server-rendered page nevertheless embeds
-    the page data as JSON. We accept only objects containing a plausible LSE
-    code, company/security name and supported trading currency.
-    """
-    rows = []
-    script_pattern = re.compile(
-        r"<script\b[^>]*type=[\"']application/json[\"'][^>]*>(.*?)</script>",
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    candidates = [html_lib.unescape(m.group(1)) for m in script_pattern.finditer(page_html)]
-
-    # Next.js commonly stores its full page payload here without an explicit
-    # application/json type attribute.
-    next_match = re.search(
-        r"<script\b[^>]*id=[\"']__NEXT_DATA__[\"'][^>]*>(.*?)</script>",
-        page_html,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if next_match:
-        candidates.append(html_lib.unescape(next_match.group(1)))
-
-    import json
-
-    code_keys = ("code", "tidm", "epic", "ticker", "symbol")
-    name_keys = ("name", "issuerName", "issuername", "description", "displayName")
-    currency_keys = ("currency", "currencyCode", "currencycode")
-
-    for text in candidates:
-        try:
-            payload = json.loads(text)
-        except Exception:
-            continue
-        for obj in _walk_json(payload):
-            epic = None
-            for key in code_keys:
-                if key in obj:
-                    epic = _valid_epic(obj.get(key))
-                    if epic:
-                        break
-            if not epic:
-                continue
-
-            name = ""
-            for key in name_keys:
-                if key in obj and obj.get(key):
-                    name = _clean_company_name(obj.get(key))
-                    break
-            if not name:
-                continue
-
-            currency = ""
-            for key in currency_keys:
-                if key in obj and obj.get(key):
-                    currency = str(obj.get(key)).strip().upper()
-                    break
-            if currency and currency not in {"GBX", "GBP", "USD", "EUR"}:
-                continue
-
-            rows.append((epic, name))
-    return rows
-
-
-def _extract_official_lse_rows(page_html):
-    rows = _rows_from_html_tables(page_html)
-    if rows:
-        return rows
-    return _rows_from_embedded_json(page_html)
-
-
-def _make_official_lse_session():
+def _make_lse_session():
+    """Create a browser-like session for the static constituent page."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": (
@@ -275,82 +98,147 @@ def _make_official_lse_session():
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/150.0.0.0 Safari/537.36"
         ),
-        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,*/*;q=0.8"
+        ),
         "Accept-Language": "en-GB,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
     })
     return session
 
 
+def _extract_first_table_after_marker(page_html, marker):
+    """Return the first complete HTML table appearing after marker text."""
+    marker_match = re.search(
+        re.escape(marker).replace(r"\ ", r"\s+"),
+        page_html,
+        flags=re.IGNORECASE,
+    )
+    if not marker_match:
+        raise RuntimeError(
+            f"Could not find the FTSE 250 constituent marker {marker!r}."
+        )
+
+    table_start = page_html.find("<table", marker_match.end())
+    if table_start < 0:
+        raise RuntimeError("No constituent table found after the FTSE 250 marker.")
+
+    # Handle nested markup safely enough for ordinary HTML tables by counting
+    # table open/close tags from the first table after the marker.
+    token_re = re.compile(r"</?table\b[^>]*>", re.IGNORECASE)
+    depth = 0
+    for token in token_re.finditer(page_html, table_start):
+        if token.group(0).lower().startswith("</table"):
+            depth -= 1
+            if depth == 0:
+                return page_html[table_start:token.end()]
+        else:
+            depth += 1
+
+    raise RuntimeError("The FTSE 250 constituent table was not properly closed.")
+
+
+def _parse_ftse250_constituent_table(page_html):
+    """
+    Parse only the table immediately following the statement that its shares
+    make up the FTSE 250. This deliberately ignores all sidebar, chat, news,
+    riser/faller and other share links elsewhere on the page.
+    """
+    marker = "The following shares make up the FTSE 250"
+    table_html = _extract_first_table_after_marker(page_html, marker)
+
+    constituents = {}
+    row_re = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+    anchor_re = re.compile(
+        r"<a\b[^>]*href=[\"'][^\"']*(?:shareprice=([A-Z0-9.]+)|/share-prices/[^\"']+)[^\"']*[\"'][^>]*>(.*?)</a>",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    for row_match in row_re.finditer(table_html):
+        row_html = row_match.group(1)
+        row_text = _clean_company_name(row_html)
+
+        epic = None
+        name = None
+
+        # Preferred path: read the ticker from the shareprice query parameter
+        # and the company name from that same anchor.
+        for anchor_match in anchor_re.finditer(row_html):
+            query_epic = anchor_match.group(1)
+            label = _clean_company_name(anchor_match.group(2))
+            visible = re.search(r"^(.*?)\s*\(([A-Z0-9.]{1,10})\.?\)\s*$", label)
+
+            if query_epic:
+                epic = query_epic.upper().strip().rstrip(".")
+                name = label
+                if visible and visible.group(2).upper().rstrip(".") == epic:
+                    name = visible.group(1).strip()
+                break
+
+            if visible:
+                epic = visible.group(2).upper().strip().rstrip(".")
+                name = visible.group(1).strip()
+                break
+
+        # Fallback: the displayed Share cell always ends with "(EPIC)".
+        if not epic:
+            visible = re.search(
+                r"(.+?)\s*\(([A-Z0-9.]{1,10})\.?\)(?=\s|$)",
+                row_text,
+                flags=re.IGNORECASE,
+            )
+            if visible:
+                name = visible.group(1).strip()
+                epic = visible.group(2).upper().strip().rstrip(".")
+
+        if not epic or not name:
+            continue
+        if not re.fullmatch(r"[A-Z0-9.]{1,10}", epic):
+            continue
+        if epic.lower() in {"share", "price", "change"}:
+            continue
+
+        constituents.setdefault(epic, name)
+
+    count = len(constituents)
+    if not LSE_EXPECTED_MIN <= count <= LSE_EXPECTED_MAX:
+        sample = ", ".join(list(constituents)[:10]) or "none"
+        raise RuntimeError(
+            "The isolated FTSE 250 constituent table produced an unexpected "
+            f"count of {count}; expected {LSE_EXPECTED_MIN}-{LSE_EXPECTED_MAX}. "
+            f"Sample codes: {sample}. Refusing to publish an unverified universe."
+        )
+
+    return constituents
+
+
 def fetch_ftse250_constituents():
     """
-    Fetch the current FTSE 250 universe automatically from the official
-    London Stock Exchange constituent pages.
+    Fetch the FTSE 250 universe automatically from the static lse.co.uk page.
 
-    The official table contains 20 records per page. Every page is fetched,
-    rows are deduplicated by LSE code, and the result is accepted only when it
-    contains exactly 250 unique constituents. The screener fails closed rather
-    than using a contaminated or partial universe.
+    Only the first table immediately following the exact sentence
+    'The following shares make up the FTSE 250' is parsed. No links outside
+    that table are eligible, which prevents AIM/sidebar shares from entering.
     """
-    session = _make_official_lse_session()
-    constituents = {}
-    empty_pages = 0
-
+    session = _make_lse_session()
     try:
-        for page_number in range(1, LSE_MAX_PAGES + 1):
-            response = session.get(
-                OFFICIAL_LSE_CONSTITUENTS_URL,
-                params={"page": page_number},
-                timeout=(20, 60),
-                allow_redirects=True,
-            )
-            response.raise_for_status()
-            page_html = response.text
-            rows = _extract_official_lse_rows(page_html)
-
-            print(
-                f"  Official LSE page {page_number}: HTTP {response.status_code}; "
-                f"{len(response.content):,} bytes; {len(rows)} candidate rows"
-            )
-
-            before = len(constituents)
-            for epic, name in rows:
-                constituents.setdefault(epic, name)
-            added = len(constituents) - before
-
-            if added == 0:
-                empty_pages += 1
-            else:
-                empty_pages = 0
-
-            if len(constituents) >= LSE_EXPECTED_CONSTITUENTS:
-                break
-
-            # Once records have been found, two consecutive pages with no new
-            # constituents indicates that pagination or the page format has
-            # changed. Stop and fail validation rather than scraping elsewhere.
-            if constituents and empty_pages >= 2:
-                break
-
-        if len(constituents) != LSE_EXPECTED_CONSTITUENTS:
-            sample = ", ".join(list(constituents)[:10]) or "none"
-            raise RuntimeError(
-                "Official London Stock Exchange constituent retrieval did not "
-                f"return exactly {LSE_EXPECTED_CONSTITUENTS} unique FTSE 250 "
-                f"codes; received {len(constituents)}. Sample codes: {sample}. "
-                "The LSE page format or pagination may have changed; refusing "
-                "to publish an unverified universe."
-            )
-
+        response = session.get(LSE_URL, timeout=(20, 60), allow_redirects=True)
         print(
-            f"  Loaded {len(constituents)} verified FTSE 250 constituents "
-            "from the official London Stock Exchange."
+            f"  Constituents response: HTTP {response.status_code}; "
+            f"{len(response.content):,} bytes; final URL: {response.url}"
+        )
+        response.raise_for_status()
+        constituents = _parse_ftse250_constituent_table(response.text)
+        print(
+            f"  Parsed {len(constituents)} FTSE 250 constituents from the "
+            "isolated constituent table."
         )
         return constituents
     finally:
         session.close()
-
 
 def epic_to_yahoo(epic):
     return epic.rstrip(".") + ".L"
