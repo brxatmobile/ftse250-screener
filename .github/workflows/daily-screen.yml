@@ -1,0 +1,48 @@
+name: Daily FTSE 250 screen
+
+on:
+  schedule:
+    # 07:00 UTC on weekdays = 08:00 in the UK during BST (summer) or 07:00 GMT
+    # (winter) — always comfortably before a 09:30 review.
+    - cron: "0 7 * * 1-5"
+  workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run screener
+        env:
+          CAPITAL: ${{ vars.CAPITAL }}
+          RISK_PCT: ${{ vars.RISK_PCT }}
+        run: python screener.py
+
+      - name: Upload page artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
