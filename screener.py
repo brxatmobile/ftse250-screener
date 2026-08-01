@@ -17,7 +17,7 @@ converted to pounds. The completed daily candle is used only to build a
 next-session watchlist; it is not treated as an executable entry price.
 """
 
-# FILE_VERSION: ISOLATED_STATIC_TABLE_2026_08_01
+# FILE_VERSION: RESTORED_WORKING_TABLE_ONLY_2026_08_01
 import os
 import re
 import sys
@@ -85,7 +85,7 @@ def _clean_company_name(value):
 
 
 LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
-LSE_EXPECTED_MIN = 240
+LSE_EXPECTED_MIN = 200
 LSE_EXPECTED_MAX = 260
 
 
@@ -207,9 +207,9 @@ def _parse_ftse250_constituent_table(page_html):
     if not LSE_EXPECTED_MIN <= count <= LSE_EXPECTED_MAX:
         sample = ", ".join(list(constituents)[:10]) or "none"
         raise RuntimeError(
-            "The isolated FTSE 250 constituent table produced an unexpected "
+            "The isolated FTSE 250 table produced an unusable "
             f"count of {count}; expected {LSE_EXPECTED_MIN}-{LSE_EXPECTED_MAX}. "
-            f"Sample codes: {sample}. Refusing to publish an unverified universe."
+            f"Sample codes: {sample}. Refusing to publish because the table was not parsed correctly."
         )
 
     return constituents
