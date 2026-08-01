@@ -17,6 +17,7 @@ converted to pounds. The completed daily candle is used only to build a
 next-session watchlist; it is not treated as an executable entry price.
 """
 
+# FILE_VERSION: OFFICIAL_LSE_PAGINATED_2026_08_01
 import os
 import re
 import sys
@@ -76,130 +77,280 @@ def calculate_position_size(capital, risk_amount, entry_gbx, risk_per_share_gbx)
 
 
 def _clean_company_name(value):
-    """Remove HTML markup/entities and tidy a company name."""
+    """Remove HTML markup/entities and tidy a company/security name."""
     value = re.sub(r"<[^>]+>", " ", str(value))
     value = html_lib.unescape(value)
-    value = re.sub(r"\[[^]]*]", " ", value)
-    return re.sub(r"\s+", " ", value).strip(" \t\r\n-–|")
+    value = re.sub(r"\s+", " ", value)
+    return value.strip(" \t\r\n-–|")
 
 
-def _normalise_company_name(value):
-    """Create a conservative key used to match provider and LSE names."""
-    value = _clean_company_name(value).lower().replace("&", " and ")
-    value = re.sub(r"\b(public limited company|plc|limited|ltd|group|holdings?)\b", " ", value)
-    value = re.sub(r"\bthe\b", " ", value)
-    value = re.sub(r"[^a-z0-9]+", " ", value)
-    return re.sub(r"\s+", " ", value).strip()
+OFFICIAL_LSE_CONSTITUENTS_URL = (
+    "https://www.londonstockexchange.com/indices/ftse-250/constituents/table"
+)
+LSE_PAGE_SIZE = 20
+LSE_EXPECTED_CONSTITUENTS = 250
+LSE_MAX_PAGES = 20
 
 
-class _SimpleTableParser(HTMLParser):
-    """Collect text from ordinary HTML tables without optional packages."""
+class _OfficialLSETableParser(HTMLParser):
+    """Collect ordinary HTML table rows from an official LSE page."""
+
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.tables=[]; self._depth=0; self._table=None; self._row=None; self._cell=None
+        self.tables = []
+        self._table_depth = 0
+        self._table = None
+        self._row = None
+        self._cell = None
+
     def handle_starttag(self, tag, attrs):
-        tag=tag.lower()
-        if tag=="table":
-            self._depth += 1
-            if self._depth==1: self._table=[]
-        elif self._depth==1 and tag=="tr": self._row=[]
-        elif self._depth==1 and tag in {"th","td"}: self._cell=[]
+        tag = tag.lower()
+        if tag == "table":
+            self._table_depth += 1
+            if self._table_depth == 1:
+                self._table = []
+        elif self._table_depth == 1 and tag == "tr":
+            self._row = []
+        elif self._table_depth == 1 and tag in {"th", "td"}:
+            self._cell = []
+
     def handle_data(self, data):
-        if self._depth==1 and self._cell is not None: self._cell.append(data)
+        if self._table_depth == 1 and self._cell is not None:
+            self._cell.append(data)
+
     def handle_endtag(self, tag):
-        tag=tag.lower()
-        if self._depth==1 and tag in {"th","td"}:
+        tag = tag.lower()
+        if self._table_depth == 1 and tag in {"th", "td"}:
             if self._row is not None and self._cell is not None:
                 self._row.append(_clean_company_name("".join(self._cell)))
-            self._cell=None
-        elif self._depth==1 and tag=="tr":
-            if self._table is not None and self._row: self._table.append(self._row)
-            self._row=None
-        elif tag=="table":
-            if self._depth==1 and self._table:
-                self.tables.append(self._table); self._table=None
-            if self._depth: self._depth -= 1
+            self._cell = None
+        elif self._table_depth == 1 and tag == "tr":
+            if self._table is not None and self._row:
+                self._table.append(self._row)
+            self._row = None
+        elif tag == "table":
+            if self._table_depth == 1 and self._table:
+                self.tables.append(self._table)
+                self._table = None
+            if self._table_depth:
+                self._table_depth -= 1
 
 
-VANGUARD_URL = "https://www.vanguard.co.uk/uk-fund-directory/product/etf/equity/9581/ftse-250-ucits"
-LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
-YAHOO_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
+def _normalise_header(value):
+    return re.sub(r"[^a-z0-9]+", " ", str(value).lower()).strip()
 
 
-def _request_text(url, session):
-    response=session.get(url, timeout=(20,60), allow_redirects=True)
-    response.raise_for_status()
-    print(f"  Source response: HTTP {response.status_code} {response.url} ({len(response.content):,} bytes)")
-    return response.text
+def _valid_epic(value):
+    value = html_lib.unescape(str(value)).upper().strip()
+    value = value.removesuffix(".L").rstrip(".")
+    return value if re.fullmatch(r"[A-Z0-9.]{1,10}", value) else None
 
 
-def _parse_vanguard_holding_names(page_html):
-    parser=_SimpleTableParser(); parser.feed(page_html); parser.close()
-    candidates=[]
+def _rows_from_html_tables(page_html):
+    """Extract Code/Name rows from a genuine LSE constituent table."""
+    parser = _OfficialLSETableParser()
+    parser.feed(page_html)
+    parser.close()
+
+    found = []
     for table in parser.tables:
-        if not table: continue
-        header=[re.sub(r"\s+"," ",c).strip().lower() for c in table[0]]
-        idx=next((i for i,h in enumerate(header) if h in {"holding name","holding","name"}),None)
-        if idx is None: continue
-        names=[]
+        if not table:
+            continue
+        header = [_normalise_header(cell) for cell in table[0]]
+        try:
+            code_idx = next(i for i, h in enumerate(header) if h == "code")
+            name_idx = next(i for i, h in enumerate(header) if h == "name")
+            currency_idx = next(i for i, h in enumerate(header) if h == "currency")
+        except StopIteration:
+            continue
+
+        # The official table also includes market cap and price columns. This
+        # prevents an unrelated two-column table from being accepted.
+        if not any("market cap" in h for h in header):
+            continue
+        if not any(h == "price" for h in header):
+            continue
+
         for row in table[1:]:
-            if idx < len(row):
-                name=_clean_company_name(row[idx])
-                if name and name.lower() not in {"cash","cash and cash equivalents"}: names.append(name)
-        unique=list(dict.fromkeys(names))
-        if 225 <= len(unique) <= 270: candidates.append(unique)
-    if len(candidates)!=1:
-        raise RuntimeError(f"Could not uniquely identify Vanguard FTSE 250 holdings table. Plausible sizes: {[len(x) for x in candidates]}")
-    print(f"  Parsed {len(candidates[0])} FTSE 250 tracker holdings.")
-    return candidates[0]
+            if max(code_idx, name_idx, currency_idx) >= len(row):
+                continue
+            epic = _valid_epic(row[code_idx])
+            name = _clean_company_name(row[name_idx])
+            currency = str(row[currency_idx]).strip().upper()
+            if epic and name and currency in {"GBX", "GBP", "USD", "EUR"}:
+                found.append((epic, name))
+    return found
 
 
-def _parse_lse_share_links(page_html):
-    lookup={}
-    pattern=re.compile(r"<a\b[^>]*href=[\"'][^\"']*(?:SharePrice\.html|share-prices/[^\"'?]+)[^\"']*[?&](?:amp;)?shareprice=([A-Z0-9.]{1,10})[^\"']*[\"'][^>]*>(.*?)</a>", re.I|re.S)
-    for match in pattern.finditer(page_html):
-        epic=html_lib.unescape(match.group(1)).upper().strip().rstrip(".")
-        label=_clean_company_name(match.group(2))
-        label=re.sub(rf"\s*\(\s*{re.escape(epic)}\.?\s*\)\s*$","",label,flags=re.I).strip()
-        key=_normalise_company_name(label)
-        if key and re.fullmatch(r"[A-Z0-9.]{1,10}",epic): lookup.setdefault(key,epic)
-    print(f"  Built {len(lookup)} LSE company/ticker mappings.")
-    return lookup
+def _walk_json(value):
+    """Yield every dictionary recursively from an embedded JSON value."""
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_json(child)
 
 
-def _resolve_yahoo_epic(name, session):
-    response=session.get(YAHOO_SEARCH_URL, params={"q":name,"quotesCount":10,"newsCount":0}, timeout=(10,30))
-    response.raise_for_status()
-    for quote in response.json().get("quotes",[]):
-        symbol=str(quote.get("symbol","")).upper(); exchange=str(quote.get("exchange","")).upper(); qtype=str(quote.get("quoteType","")).upper()
-        if symbol.endswith(".L") and qtype in {"EQUITY","ETF"} and exchange in {"LSE","LONDON","LONDON STOCK EXCHANGE"}:
-            return symbol[:-2].rstrip(".")
-    return None
+def _rows_from_embedded_json(page_html):
+    """
+    Extract rows from JSON embedded by the LSE web application.
+
+    The official site is JavaScript-driven and may not emit a literal HTML
+    table to non-browser clients. Its server-rendered page nevertheless embeds
+    the page data as JSON. We accept only objects containing a plausible LSE
+    code, company/security name and supported trading currency.
+    """
+    rows = []
+    script_pattern = re.compile(
+        r"<script\b[^>]*type=[\"']application/json[\"'][^>]*>(.*?)</script>",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    candidates = [html_lib.unescape(m.group(1)) for m in script_pattern.finditer(page_html)]
+
+    # Next.js commonly stores its full page payload here without an explicit
+    # application/json type attribute.
+    next_match = re.search(
+        r"<script\b[^>]*id=[\"']__NEXT_DATA__[\"'][^>]*>(.*?)</script>",
+        page_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if next_match:
+        candidates.append(html_lib.unescape(next_match.group(1)))
+
+    import json
+
+    code_keys = ("code", "tidm", "epic", "ticker", "symbol")
+    name_keys = ("name", "issuerName", "issuername", "description", "displayName")
+    currency_keys = ("currency", "currencyCode", "currencycode")
+
+    for text in candidates:
+        try:
+            payload = json.loads(text)
+        except Exception:
+            continue
+        for obj in _walk_json(payload):
+            epic = None
+            for key in code_keys:
+                if key in obj:
+                    epic = _valid_epic(obj.get(key))
+                    if epic:
+                        break
+            if not epic:
+                continue
+
+            name = ""
+            for key in name_keys:
+                if key in obj and obj.get(key):
+                    name = _clean_company_name(obj.get(key))
+                    break
+            if not name:
+                continue
+
+            currency = ""
+            for key in currency_keys:
+                if key in obj and obj.get(key):
+                    currency = str(obj.get(key)).strip().upper()
+                    break
+            if currency and currency not in {"GBX", "GBP", "USD", "EUR"}:
+                continue
+
+            rows.append((epic, name))
+    return rows
+
+
+def _extract_official_lse_rows(page_html):
+    rows = _rows_from_html_tables(page_html)
+    if rows:
+        return rows
+    return _rows_from_embedded_json(page_html)
+
+
+def _make_official_lse_session():
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/150.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-GB,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    })
+    return session
 
 
 def fetch_ftse250_constituents():
-    """Automatically build a cross-validated FTSE 250 universe."""
-    session=requests.Session()
-    session.headers.update({"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150 Safari/537.36","Accept-Language":"en-GB,en;q=0.9"})
+    """
+    Fetch the current FTSE 250 universe automatically from the official
+    London Stock Exchange constituent pages.
+
+    The official table contains 20 records per page. Every page is fetched,
+    rows are deduplicated by LSE code, and the result is accepted only when it
+    contains exactly 250 unique constituents. The screener fails closed rather
+    than using a contaminated or partial universe.
+    """
+    session = _make_official_lse_session()
+    constituents = {}
+    empty_pages = 0
+
     try:
-        holdings=_parse_vanguard_holding_names(_request_text(VANGUARD_URL,session))
-        lse_lookup=_parse_lse_share_links(_request_text(LSE_URL,session))
-        constituents={}; unresolved=[]
-        for name in holdings:
-            epic=lse_lookup.get(_normalise_company_name(name))
-            if epic: constituents[epic]=name
-            else: unresolved.append(name)
-        for name in unresolved:
-            try: epic=_resolve_yahoo_epic(name,session)
-            except Exception as exc:
-                print(f"  Yahoo ticker lookup warning for {name}: {exc}"); epic=None
-            if epic: constituents.setdefault(epic,name)
-        if not 225 <= len(constituents) <= 260:
-            raise RuntimeError(f"Only resolved {len(constituents)} verified FTSE 250 holdings; refusing to publish an unverified universe.")
-        print(f"  Resolved {len(constituents)} cross-validated FTSE 250 constituents.")
+        for page_number in range(1, LSE_MAX_PAGES + 1):
+            response = session.get(
+                OFFICIAL_LSE_CONSTITUENTS_URL,
+                params={"page": page_number},
+                timeout=(20, 60),
+                allow_redirects=True,
+            )
+            response.raise_for_status()
+            page_html = response.text
+            rows = _extract_official_lse_rows(page_html)
+
+            print(
+                f"  Official LSE page {page_number}: HTTP {response.status_code}; "
+                f"{len(response.content):,} bytes; {len(rows)} candidate rows"
+            )
+
+            before = len(constituents)
+            for epic, name in rows:
+                constituents.setdefault(epic, name)
+            added = len(constituents) - before
+
+            if added == 0:
+                empty_pages += 1
+            else:
+                empty_pages = 0
+
+            if len(constituents) >= LSE_EXPECTED_CONSTITUENTS:
+                break
+
+            # Once records have been found, two consecutive pages with no new
+            # constituents indicates that pagination or the page format has
+            # changed. Stop and fail validation rather than scraping elsewhere.
+            if constituents and empty_pages >= 2:
+                break
+
+        if len(constituents) != LSE_EXPECTED_CONSTITUENTS:
+            sample = ", ".join(list(constituents)[:10]) or "none"
+            raise RuntimeError(
+                "Official London Stock Exchange constituent retrieval did not "
+                f"return exactly {LSE_EXPECTED_CONSTITUENTS} unique FTSE 250 "
+                f"codes; received {len(constituents)}. Sample codes: {sample}. "
+                "The LSE page format or pagination may have changed; refusing "
+                "to publish an unverified universe."
+            )
+
+        print(
+            f"  Loaded {len(constituents)} verified FTSE 250 constituents "
+            "from the official London Stock Exchange."
+        )
         return constituents
     finally:
         session.close()
+
 
 def epic_to_yahoo(epic):
     return epic.rstrip(".") + ".L"
