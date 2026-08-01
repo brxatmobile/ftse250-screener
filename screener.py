@@ -17,8 +17,13 @@ import re
 import sys
 import math
 import datetime as dt
+import html as html_lib
+import random
+import time
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -26,7 +31,9 @@ import yfinance as yf
 CAPITAL = float(os.environ.get("CAPITAL", "5000"))
 RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "docs", "index.html")
-LSE_URL = "https://www.lse.co.uk/share-prices/indices/ftse-250/constituents.html"
+LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
+LSE_HOME_URL = "https://www.lse.co.uk/"
+LSE_INDICES_URL = "https://www.lse.co.uk/indices/"
 
 INK = "#12161F"
 PANEL = "#1B2129"
@@ -39,26 +46,223 @@ PAPER = "#ECE7DA"
 MUTED = "#8B92A0"
 
 
-def fetch_ftse250_constituents():
-    """Scrape ticker -> name pairs from the LSE FTSE 250 constituents page."""
-    resp = requests.get(LSE_URL, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-    resp.raise_for_status()
-    html = resp.text
-    # Anchors look like: SharePrice.html?shareprice=WIZZ&share=Wizz-Air ... >Wizz Air (WIZZ)<
-    pattern = re.compile(
-        r'shareprice=([A-Z0-9.]{1,6})&share=[^"]*"[^>]*>([^<(]+)\(\1\)'
+def _make_lse_session():
+    """Create a retrying session with normal browser request headers."""
+    session = requests.Session()
+
+    retry = Retry(
+        total=4,
+        connect=4,
+        read=4,
+        status=4,
+        backoff_factor=1.5,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
     )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=4)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/150.0.0.0 Safari/537.36"
+        ),
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,image/apng,*/*;q=0.8"
+        ),
+        "Accept-Language": "en-GB,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "DNT": "1",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
+    })
+    return session
+
+
+def _clean_company_name(value):
+    """Remove HTML tags/entities and tidy whitespace from a company name."""
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = html_lib.unescape(value)
+    value = re.sub(r"\s+", " ", value).strip(" \t\r\n-–|")
+    return value
+
+
+def _parse_lse_constituents(page_html):
+    """
+    Parse ticker -> name pairs from LSE HTML.
+
+    Several patterns are supported because LSE has used slightly different
+    link capitalisation, attribute order and markup over time.
+    """
     seen = {}
-    for m in pattern.finditer(html):
-        epic, name = m.group(1).strip(), m.group(2).strip()
-        if epic and epic not in seen:
-            seen[epic] = name
+
+    # Current/typical LSE share links. The link body usually ends "(EPIC)".
+    anchor_pattern = re.compile(
+        r"""<a\b[^>]*href=["'][^"']*
+            (?:SharePrice\.html|share-prices/[^"'?]+)
+            [^"']*[?&](?:amp;)?shareprice=([A-Z0-9.]{1,10})
+            [^"']*["'][^>]*>
+            (.*?)
+            </a>""",
+        re.IGNORECASE | re.DOTALL | re.VERBOSE,
+    )
+
+    for match in anchor_pattern.finditer(page_html):
+        epic = html_lib.unescape(match.group(1)).upper().strip().rstrip(".")
+        label = _clean_company_name(match.group(2))
+
+        # Remove the final ticker in brackets, e.g. "Greggs (GRG)".
+        label = re.sub(
+            rf"\s*\(\s*{re.escape(epic)}\.?\s*\)\s*$",
+            "",
+            label,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        if epic and label and epic not in seen:
+            seen[epic] = label
+
+    # Fallback for pages where the ticker is present only in the displayed text.
     if len(seen) < 100:
-        raise RuntimeError(
-            f"Only parsed {len(seen)} constituents — LSE page layout may have "
-            "changed; check the regex in fetch_ftse250_constituents()."
+        display_pattern = re.compile(
+            r"""<a\b[^>]*href=["'][^"']*(?:SharePrice\.html|share-prices/)[^"']*["'][^>]*>
+                (.*?)
+                \(\s*([A-Z0-9.]{1,10})\.?\s*\)
+                \s*</a>""",
+            re.IGNORECASE | re.DOTALL | re.VERBOSE,
         )
+        for match in display_pattern.finditer(page_html):
+            name = _clean_company_name(match.group(1))
+            epic = html_lib.unescape(match.group(2)).upper().strip().rstrip(".")
+            if epic and name and epic not in seen:
+                seen[epic] = name
+
+    # Final fallback for embedded JSON/escaped HTML containing shareprice=.
+    if len(seen) < 100:
+        decoded = html_lib.unescape(page_html).replace("\\u0026", "&").replace("\\/", "/")
+        query_pattern = re.compile(
+            r"""shareprice=([A-Z0-9.]{1,10})
+                (?:&|&amp;)share=[^"'<>\\\s]+
+                [^>]{0,500}>
+                \s*([^<>{}\[\]]{2,120}?)
+                \s*\(\s*\1\.?\s*\)""",
+            re.IGNORECASE | re.DOTALL | re.VERBOSE,
+        )
+        for match in query_pattern.finditer(decoded):
+            epic = match.group(1).upper().strip().rstrip(".")
+            name = _clean_company_name(match.group(2))
+            if epic and name and epic not in seen:
+                seen[epic] = name
+
     return seen
+
+
+def fetch_ftse250_constituents():
+    """
+    Scrape ticker -> name pairs from the LSE FTSE 250 constituents page.
+
+    The request first visits the LSE home and indices pages so the session
+    receives ordinary site cookies before requesting the constituent page.
+    """
+    session = _make_lse_session()
+
+    try:
+        # Establish an ordinary navigation session and collect site cookies.
+        for warmup_url, referer in (
+            (LSE_HOME_URL, None),
+            (LSE_INDICES_URL, LSE_HOME_URL),
+        ):
+            warmup_headers = {}
+            if referer:
+                warmup_headers["Referer"] = referer
+
+            try:
+                warmup = session.get(
+                    warmup_url,
+                    headers=warmup_headers,
+                    timeout=(15, 30),
+                    allow_redirects=True,
+                )
+                print(
+                    f"  LSE warm-up: {warmup.status_code} "
+                    f"{warmup.url} ({len(warmup.content):,} bytes)"
+                )
+            except requests.RequestException as exc:
+                # A warm-up failure is not fatal; the main request may still work.
+                print(f"  LSE warm-up warning: {exc}")
+
+            time.sleep(random.uniform(0.6, 1.2))
+
+        response = session.get(
+            LSE_URL,
+            headers={"Referer": LSE_INDICES_URL},
+            timeout=(20, 60),
+            allow_redirects=True,
+        )
+
+        print(
+            f"  LSE constituents response: HTTP {response.status_code}; "
+            f"final URL: {response.url}; {len(response.content):,} bytes"
+        )
+
+        if response.status_code == 403:
+            server = response.headers.get("server", "unknown")
+            request_id = (
+                response.headers.get("cf-ray")
+                or response.headers.get("x-request-id")
+                or "not supplied"
+            )
+            raise RuntimeError(
+                "LSE returned HTTP 403 Forbidden even after browser-style "
+                "headers, cookies and a normal navigation sequence. "
+                f"Server={server}; request-id={request_id}. This normally means "
+                "the LSE site is blocking the GitHub-hosted runner's IP address, "
+                "rather than a parsing problem in screener.py."
+            )
+
+        response.raise_for_status()
+
+        content_type = response.headers.get("content-type", "").lower()
+        if "html" not in content_type and not response.text.lstrip().startswith("<"):
+            raise RuntimeError(
+                "LSE returned an unexpected response instead of HTML: "
+                f"content-type={content_type or 'not supplied'}."
+            )
+
+        page_html = response.text
+        constituents = _parse_lse_constituents(page_html)
+
+        if len(constituents) < 100:
+            page_title = re.search(
+                r"<title[^>]*>(.*?)</title>",
+                page_html,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            title = _clean_company_name(page_title.group(1)) if page_title else "unknown"
+            preview = re.sub(r"\s+", " ", _clean_company_name(page_html[:1000]))[:300]
+
+            raise RuntimeError(
+                f"Only parsed {len(constituents)} constituents from the LSE page. "
+                f"Page title: {title!r}. Response preview: {preview!r}. "
+                "The LSE page layout may have changed or an access-check page "
+                "may have been returned."
+            )
+
+        print(f"  Parsed {len(constituents)} LSE constituents.")
+        return constituents
+
+    finally:
+        session.close()
 
 
 def epic_to_yahoo(epic):
