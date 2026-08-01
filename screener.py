@@ -33,7 +33,6 @@ import yfinance as yf
 CAPITAL = float(os.environ.get("CAPITAL", "5000"))
 RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "docs", "index.html")
-CONSTITUENTS_URL = "https://en.wikipedia.org/wiki/FTSE_250_Index"
 
 # Yahoo Finance normally reports London-listed equity prices in GBX (pence).
 PENCE_PER_POUND = 100.0
@@ -76,152 +75,131 @@ def calculate_position_size(capital, risk_amount, entry_gbx, risk_per_share_gbx)
     return max(0, min(shares_by_risk, shares_by_capital))
 
 
-def _normalise_column_name(column):
-    """Flatten and normalise a pandas HTML-table column heading."""
-    if isinstance(column, tuple):
-        text = " ".join(str(part) for part in column if str(part) != "nan")
-    else:
-        text = str(column)
-    return re.sub(r"\s+", " ", text).strip().lower()
+def _clean_company_name(value):
+    """Remove HTML markup/entities and tidy a company name."""
+    value = re.sub(r"<[^>]+>", " ", str(value))
+    value = html_lib.unescape(value)
+    value = re.sub(r"\[[^]]*]", " ", value)
+    return re.sub(r"\s+", " ", value).strip(" \t\r\n-–|")
 
 
-class _WikipediaTableParser(HTMLParser):
-    """Collect HTML table text using only Python's standard library."""
+def _normalise_company_name(value):
+    """Create a conservative key used to match provider and LSE names."""
+    value = _clean_company_name(value).lower().replace("&", " and ")
+    value = re.sub(r"\b(public limited company|plc|limited|ltd|group|holdings?)\b", " ", value)
+    value = re.sub(r"\bthe\b", " ", value)
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
 
+
+class _SimpleTableParser(HTMLParser):
+    """Collect text from ordinary HTML tables without optional packages."""
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.tables = []
-        self._table_depth = 0
-        self._current_table = None
-        self._current_row = None
-        self._current_cell = None
-
+        self.tables=[]; self._depth=0; self._table=None; self._row=None; self._cell=None
     def handle_starttag(self, tag, attrs):
-        tag = tag.lower()
-        if tag == "table":
-            self._table_depth += 1
-            if self._table_depth == 1:
-                self._current_table = []
-        elif self._table_depth == 1 and tag == "tr":
-            self._current_row = []
-        elif self._table_depth == 1 and tag in {"th", "td"}:
-            self._current_cell = []
-
+        tag=tag.lower()
+        if tag=="table":
+            self._depth += 1
+            if self._depth==1: self._table=[]
+        elif self._depth==1 and tag=="tr": self._row=[]
+        elif self._depth==1 and tag in {"th","td"}: self._cell=[]
     def handle_data(self, data):
-        if self._table_depth == 1 and self._current_cell is not None:
-            self._current_cell.append(data)
-
+        if self._depth==1 and self._cell is not None: self._cell.append(data)
     def handle_endtag(self, tag):
-        tag = tag.lower()
-        if self._table_depth == 1 and tag in {"th", "td"}:
-            if self._current_row is not None and self._current_cell is not None:
-                text = re.sub(r"\s+", " ", "".join(self._current_cell)).strip()
-                self._current_row.append(text)
-            self._current_cell = None
-        elif self._table_depth == 1 and tag == "tr":
-            if self._current_table is not None and self._current_row:
-                self._current_table.append(self._current_row)
-            self._current_row = None
-        elif tag == "table":
-            if self._table_depth == 1 and self._current_table:
-                self.tables.append(self._current_table)
-                self._current_table = None
-            if self._table_depth > 0:
-                self._table_depth -= 1
+        tag=tag.lower()
+        if self._depth==1 and tag in {"th","td"}:
+            if self._row is not None and self._cell is not None:
+                self._row.append(_clean_company_name("".join(self._cell)))
+            self._cell=None
+        elif self._depth==1 and tag=="tr":
+            if self._table is not None and self._row: self._table.append(self._row)
+            self._row=None
+        elif tag=="table":
+            if self._depth==1 and self._table:
+                self.tables.append(self._table); self._table=None
+            if self._depth: self._depth -= 1
 
 
-def _normalise_header(value):
-    value = re.sub(r"\[[^]]*]", "", str(value))
-    return re.sub(r"\s+", " ", value).strip().lower()
+VANGUARD_URL = "https://www.vanguard.co.uk/uk-fund-directory/product/etf/equity/9581/ftse-250-ucits"
+LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
+YAHOO_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 
 
-def _parse_ftse250_wikipedia(page_html):
-    """Parse the FTSE 250 constituent table without optional dependencies.
+def _request_text(url, session):
+    response=session.get(url, timeout=(20,60), allow_redirects=True)
+    response.raise_for_status()
+    print(f"  Source response: HTTP {response.status_code} {response.url} ({len(response.content):,} bytes)")
+    return response.text
 
-    This intentionally avoids ``pandas.read_html`` because that requires an
-    optional parser such as lxml. Only tables with company and ticker headers
-    and roughly 250 constituent rows are considered. The function fails closed
-    if the table cannot be identified uniquely.
-    """
-    parser = _WikipediaTableParser()
-    try:
-        parser.feed(page_html)
-        parser.close()
-    except Exception as exc:
-        raise RuntimeError(f"Could not parse FTSE 250 constituent HTML: {exc}") from exc
 
-    candidates = []
-    for rows in parser.tables:
-        if not rows:
-            continue
+def _parse_vanguard_holding_names(page_html):
+    parser=_SimpleTableParser(); parser.feed(page_html); parser.close()
+    candidates=[]
+    for table in parser.tables:
+        if not table: continue
+        header=[re.sub(r"\s+"," ",c).strip().lower() for c in table[0]]
+        idx=next((i for i,h in enumerate(header) if h in {"holding name","holding","name"}),None)
+        if idx is None: continue
+        names=[]
+        for row in table[1:]:
+            if idx < len(row):
+                name=_clean_company_name(row[idx])
+                if name and name.lower() not in {"cash","cash and cash equivalents"}: names.append(name)
+        unique=list(dict.fromkeys(names))
+        if 225 <= len(unique) <= 270: candidates.append(unique)
+    if len(candidates)!=1:
+        raise RuntimeError(f"Could not uniquely identify Vanguard FTSE 250 holdings table. Plausible sizes: {[len(x) for x in candidates]}")
+    print(f"  Parsed {len(candidates[0])} FTSE 250 tracker holdings.")
+    return candidates[0]
 
-        header_index = None
-        company_index = None
-        ticker_index = None
 
-        # Wikipedia can use one or more heading rows. Inspect the first few.
-        for row_index, row in enumerate(rows[:5]):
-            headers = [_normalise_header(cell) for cell in row]
-            company_index = next(
-                (i for i, h in enumerate(headers) if h in {"company", "constituent", "name"}),
-                None,
-            )
-            ticker_index = next(
-                (i for i, h in enumerate(headers) if h in {"ticker", "ticker symbol", "epic"}),
-                None,
-            )
-            if company_index is not None and ticker_index is not None:
-                header_index = row_index
-                break
+def _parse_lse_share_links(page_html):
+    lookup={}
+    pattern=re.compile(r"<a\b[^>]*href=[\"'][^\"']*(?:SharePrice\.html|share-prices/[^\"'?]+)[^\"']*[?&](?:amp;)?shareprice=([A-Z0-9.]{1,10})[^\"']*[\"'][^>]*>(.*?)</a>", re.I|re.S)
+    for match in pattern.finditer(page_html):
+        epic=html_lib.unescape(match.group(1)).upper().strip().rstrip(".")
+        label=_clean_company_name(match.group(2))
+        label=re.sub(rf"\s*\(\s*{re.escape(epic)}\.?\s*\)\s*$","",label,flags=re.I).strip()
+        key=_normalise_company_name(label)
+        if key and re.fullmatch(r"[A-Z0-9.]{1,10}",epic): lookup.setdefault(key,epic)
+    print(f"  Built {len(lookup)} LSE company/ticker mappings.")
+    return lookup
 
-        if header_index is None:
-            continue
 
-        constituents = {}
-        for row in rows[header_index + 1:]:
-            if max(company_index, ticker_index) >= len(row):
-                continue
-
-            raw_ticker = re.sub(r"\[[^]]*]", "", row[ticker_index])
-            raw_name = re.sub(r"\[[^]]*]", "", row[company_index])
-            ticker = html_lib.unescape(raw_ticker).strip().upper().rstrip(".")
-            name = _clean_company_name(raw_name)
-
-            if not re.fullmatch(r"[A-Z0-9.]{1,10}", ticker):
-                continue
-            if not name:
-                continue
-            constituents[ticker] = name
-
-        if 240 <= len(constituents) <= 260:
-            candidates.append(constituents)
-
-    if len(candidates) != 1:
-        counts = [len(candidate) for candidate in candidates]
-        raise RuntimeError(
-            "Could not uniquely identify the FTSE 250 constituents table. "
-            f"Plausible table sizes: {counts}. Refusing to publish an unverified universe."
-        )
-
-    constituents = candidates[0]
-    print(f"  Parsed {len(constituents)} verified FTSE 250 constituents.")
-    return constituents
+def _resolve_yahoo_epic(name, session):
+    response=session.get(YAHOO_SEARCH_URL, params={"q":name,"quotesCount":10,"newsCount":0}, timeout=(10,30))
+    response.raise_for_status()
+    for quote in response.json().get("quotes",[]):
+        symbol=str(quote.get("symbol","")).upper(); exchange=str(quote.get("exchange","")).upper(); qtype=str(quote.get("quoteType","")).upper()
+        if symbol.endswith(".L") and qtype in {"EQUITY","ETF"} and exchange in {"LSE","LONDON","LONDON STOCK EXCHANGE"}:
+            return symbol[:-2].rstrip(".")
+    return None
 
 
 def fetch_ftse250_constituents():
-    """Return a verified ticker-to-company mapping for the FTSE 250."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; FTSE250Screener/1.0)",
-        "Accept-Language": "en-GB,en;q=0.9",
-    }
-    response = requests.get(CONSTITUENTS_URL, headers=headers, timeout=(20, 60))
-    response.raise_for_status()
-    print(
-        f"  Constituents response: HTTP {response.status_code}; "
-        f"{len(response.content):,} bytes"
-    )
-    return _parse_ftse250_wikipedia(response.text)
-
+    """Automatically build a cross-validated FTSE 250 universe."""
+    session=requests.Session()
+    session.headers.update({"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/150 Safari/537.36","Accept-Language":"en-GB,en;q=0.9"})
+    try:
+        holdings=_parse_vanguard_holding_names(_request_text(VANGUARD_URL,session))
+        lse_lookup=_parse_lse_share_links(_request_text(LSE_URL,session))
+        constituents={}; unresolved=[]
+        for name in holdings:
+            epic=lse_lookup.get(_normalise_company_name(name))
+            if epic: constituents[epic]=name
+            else: unresolved.append(name)
+        for name in unresolved:
+            try: epic=_resolve_yahoo_epic(name,session)
+            except Exception as exc:
+                print(f"  Yahoo ticker lookup warning for {name}: {exc}"); epic=None
+            if epic: constituents.setdefault(epic,name)
+        if not 225 <= len(constituents) <= 260:
+            raise RuntimeError(f"Only resolved {len(constituents)} verified FTSE 250 holdings; refusing to publish an unverified universe.")
+        print(f"  Resolved {len(constituents)} cross-validated FTSE 250 constituents.")
+        return constituents
+    finally:
+        session.close()
 
 def epic_to_yahoo(epic):
     return epic.rstrip(".") + ".L"
