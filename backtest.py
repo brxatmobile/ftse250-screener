@@ -140,9 +140,21 @@ def run_backtest(start=None, end=None, last_n=None, capital=CAPITAL, risk_pct=RI
             else:
                 exit_price, outcome = next_row.Close, "closed flat (neither hit)"
 
-            shares = int(risk_amount / r["risk_per_share"]) if r["risk_per_share"] > 0 else 0
-            pnl_per_share = (exit_price - entry) if bull else (entry - exit_price)
-            pnl = pnl_per_share * shares
+            # Yahoo Finance quotes London-listed .L shares in pence (GBp), not pounds.
+            # Keep all stop/target comparisons in pence, but convert monetary values
+            # to GBP for position sizing and P&L.
+            entry_gbp = entry / 100.0
+            risk_per_share_gbp = r["risk_per_share"] / 100.0
+
+            risk_sized_shares = (
+                int(risk_amount / risk_per_share_gbp)
+                if risk_per_share_gbp > 0 else 0
+            )
+            affordable_shares = int(capital / entry_gbp) if entry_gbp > 0 else 0
+            shares = min(risk_sized_shares, affordable_shares)
+
+            pnl_per_share_pence = (exit_price - entry) if bull else (entry - exit_price)
+            pnl = (pnl_per_share_pence / 100.0) * shares
 
             all_trades.append({
                 "signal_date": signal_day.date().isoformat(),
@@ -171,14 +183,17 @@ def print_report(trades, capital, risk_pct):
         for t in day_trades:
             flag = "  [!] ambiguous — both stop & target touched same day" if t["ambiguous"] else ""
             print(f"  {t['epic']:<6} {t['direction']:<5} {t['pattern']:<20} score {t['score']:.1f}  "
-                  f"entry £{t['entry']:.2f} -> exit £{t['exit_price']:.2f} ({t['outcome']}){flag}")
+                  f"entry £{t['entry'] / 100:.2f} -> exit £{t['exit_price'] / 100:.2f} "
+                  f"({t['outcome']}){flag}")
             print(f"         {t['shares']} shares  ->  P&L £{t['pnl']:+.2f}")
             total_pnl += t["pnl"]
 
     n = len(trades)
     wins = sum(1 for t in trades if t["pnl"] > 0)
+    losses = sum(1 for t in trades if t["pnl"] < 0)
+    flats = n - wins - losses
     print("\n" + "-" * 78)
-    print(f"Total trades: {n}   Wins: {wins}   Losses: {n - wins}")
+    print(f"Total trades: {n}   Wins: {wins}   Losses: {losses}   Flat: {flats}")
     print(f"TOTAL P&L across all trades: £{total_pnl:+.2f}")
     print("-" * 78)
     print("\nNote: ambiguous days (stop and target both touched) are scored as a stop")
