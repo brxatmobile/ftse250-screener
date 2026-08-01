@@ -5,7 +5,7 @@ on:
     inputs:
       days:
         description: "Number of recent trading days to test (ignored if start/end given)"
-        default: "3"
+        default: "75"
       start:
         description: "Start date YYYY-MM-DD (optional)"
         default: ""
