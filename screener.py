@@ -5,15 +5,16 @@ FTSE 250 daily candlestick screener.
   site (so the universe stays current without hardcoding tickers).
 - Pulls ~2 months of daily OHLCV for every constituent via Yahoo Finance.
 - Scores each stock on candlestick pattern + RSI(14) + trend (SMA20) + volume.
-- Picks the top 5 and writes a self-contained HTML report to docs/index.html.
+- Picks the top 5 as a next-session watchlist and writes a self-contained HTML report to docs/index.html.
 
 Run manually with:  python screener.py
 Configure capital / risk % via CAPITAL and RISK_PCT below, or environment
 variables CAPITAL and RISK_PCT (used by the GitHub Actions workflow).
 
 Yahoo Finance returns London Stock Exchange equity prices in pence. Pattern
-analysis remains in pence, but monetary display, position sizing and position
-value calculations are converted to pounds.
+analysis remains in pence, but monetary display and indicative sizing are
+converted to pounds. The completed daily candle is used only to build a
+next-session watchlist; it is not treated as an executable entry price.
 """
 
 import os
@@ -22,12 +23,8 @@ import sys
 import math
 import datetime as dt
 import html as html_lib
-import random
-import time
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -35,9 +32,7 @@ import yfinance as yf
 CAPITAL = float(os.environ.get("CAPITAL", "5000"))
 RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "docs", "index.html")
-LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
-LSE_HOME_URL = "https://www.lse.co.uk/"
-LSE_INDICES_URL = "https://www.lse.co.uk/indices/"
+CONSTITUENTS_URL = "https://en.wikipedia.org/wiki/FTSE_250_Index"
 
 # Yahoo Finance normally reports London-listed equity prices in GBX (pence).
 PENCE_PER_POUND = 100.0
@@ -80,229 +75,87 @@ def calculate_position_size(capital, risk_amount, entry_gbx, risk_per_share_gbx)
     return max(0, min(shares_by_risk, shares_by_capital))
 
 
-def _make_lse_session():
-    """Create a retrying session with normal browser request headers."""
-    session = requests.Session()
-
-    retry = Retry(
-        total=4,
-        connect=4,
-        read=4,
-        status=4,
-        backoff_factor=1.5,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET", "HEAD"}),
-        respect_retry_after_header=True,
-        raise_on_status=False,
-    )
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=4)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/150.0.0.0 Safari/537.36"
-        ),
-        "Accept": (
-            "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,image/apng,*/*;q=0.8"
-        ),
-        "Accept-Language": "en-GB,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "DNT": "1",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-    })
-    return session
+def _normalise_column_name(column):
+    """Flatten and normalise a pandas HTML-table column heading."""
+    if isinstance(column, tuple):
+        text = " ".join(str(part) for part in column if str(part) != "nan")
+    else:
+        text = str(column)
+    return re.sub(r"\s+", " ", text).strip().lower()
 
 
-def _clean_company_name(value):
-    """Remove HTML tags/entities and tidy whitespace from a company name."""
-    value = re.sub(r"<[^>]+>", " ", value)
-    value = html_lib.unescape(value)
-    value = re.sub(r"\s+", " ", value).strip(" \t\r\n-–|")
-    return value
+def _parse_ftse250_wikipedia(page_html):
+    """Parse only the FTSE 250 constituents table from Wikipedia.
 
-
-def _parse_lse_constituents(page_html):
+    The previous LSE page is a JavaScript application whose HTML payload can
+    contain unrelated security tables. That made it possible for AIM shares to
+    enter the universe. Wikipedia's FTSE 250 article contains a dedicated
+    constituents table with company and ticker columns, which is easier to
+    identify unambiguously. The code fails closed unless exactly one plausible
+    table of roughly 250 members is found.
     """
-    Parse ticker -> name pairs from LSE HTML.
+    try:
+        tables = pd.read_html(page_html)
+    except (ValueError, ImportError) as exc:
+        raise RuntimeError(f"Could not parse FTSE 250 constituent tables: {exc}") from exc
 
-    Several patterns are supported because LSE has used slightly different
-    link capitalisation, attribute order and markup over time.
-    """
-    seen = {}
+    candidates = []
+    for table in tables:
+        table = table.copy()
+        table.columns = [_normalise_column_name(c) for c in table.columns]
+        cols = set(table.columns)
 
-    anchor_pattern = re.compile(
-        r"""<a\b[^>]*href=["'][^"']*
-            (?:SharePrice\.html|share-prices/[^"'?]+)
-            [^"']*[?&](?:amp;)?shareprice=([A-Z0-9.]{1,10})
-            [^"']*["'][^>]*>
-            (.*?)
-            </a>""",
-        re.IGNORECASE | re.DOTALL | re.VERBOSE,
-    )
+        ticker_col = next((c for c in table.columns if c in {"ticker", "ticker symbol", "epic"}), None)
+        company_col = next((c for c in table.columns if c in {"company", "constituent", "name"}), None)
+        if not ticker_col or not company_col:
+            continue
+        if 240 <= len(table) <= 260:
+            candidates.append((table, ticker_col, company_col))
 
-    for match in anchor_pattern.finditer(page_html):
-        epic = html_lib.unescape(match.group(1)).upper().strip().rstrip(".")
-        label = _clean_company_name(match.group(2))
-        label = re.sub(
-            rf"\s*\(\s*{re.escape(epic)}\.?\s*\)\s*$",
-            "",
-            label,
-            flags=re.IGNORECASE,
-        ).strip()
-
-        if epic and label and epic not in seen:
-            seen[epic] = label
-
-    if len(seen) < 100:
-        display_pattern = re.compile(
-            r"""<a\b[^>]*href=["'][^"']*(?:SharePrice\.html|share-prices/)[^"']*["'][^>]*>
-                (.*?)
-                \(\s*([A-Z0-9.]{1,10})\.?\s*\)
-                \s*</a>""",
-            re.IGNORECASE | re.DOTALL | re.VERBOSE,
+    if len(candidates) != 1:
+        detail = [(len(t), list(t.columns)) for t, _, _ in candidates]
+        raise RuntimeError(
+            "Could not uniquely identify a valid FTSE 250 constituents table. "
+            f"Candidates: {detail}. Refusing to publish an unverified universe."
         )
-        for match in display_pattern.finditer(page_html):
-            name = _clean_company_name(match.group(1))
-            epic = html_lib.unescape(match.group(2)).upper().strip().rstrip(".")
-            if epic and name and epic not in seen:
-                seen[epic] = name
 
-    if len(seen) < 100:
-        decoded = html_lib.unescape(page_html).replace("\\u0026", "&").replace("\\/", "/")
-        query_pattern = re.compile(
-            r"""shareprice=([A-Z0-9.]{1,10})
-                (?:&|&amp;)share=[^"'<>\\\s]+
-                [^>]{0,500}>
-                \s*([^<>{}\[\]]{2,120}?)
-                \s*\(\s*\1\.?\s*\)""",
-            re.IGNORECASE | re.DOTALL | re.VERBOSE,
+    table, ticker_col, company_col = candidates[0]
+    constituents = {}
+    for _, row in table.iterrows():
+        raw_ticker = html_lib.unescape(str(row.get(ticker_col, "")))
+        raw_name = str(row.get(company_col, ""))
+        ticker = re.sub(r"\[[^]]*]", "", raw_ticker).strip().upper().rstrip(".")
+        name = _clean_company_name(re.sub(r"\[[^]]*]", "", raw_name))
+
+        if not re.fullmatch(r"[A-Z0-9.]{1,10}", ticker):
+            continue
+        if not name or name.lower() == "nan":
+            continue
+        constituents[ticker] = name
+
+    if not 240 <= len(constituents) <= 260:
+        raise RuntimeError(
+            f"Parsed {len(constituents)} FTSE 250 constituents; expected roughly 250. "
+            "Refusing to continue with a potentially contaminated universe."
         )
-        for match in query_pattern.finditer(decoded):
-            epic = match.group(1).upper().strip().rstrip(".")
-            name = _clean_company_name(match.group(2))
-            if epic and name and epic not in seen:
-                seen[epic] = name
 
-    return seen
+    print(f"  Parsed {len(constituents)} verified FTSE 250 constituents.")
+    return constituents
 
 
 def fetch_ftse250_constituents():
-    """
-    Scrape ticker -> name pairs from the LSE FTSE 250 constituents page.
-
-    The request first visits the LSE home and indices pages so the session
-    receives ordinary site cookies before requesting the constituent page.
-    """
-    session = _make_lse_session()
-
-    try:
-        for warmup_url, referer in (
-            (LSE_HOME_URL, None),
-            (LSE_INDICES_URL, LSE_HOME_URL),
-        ):
-            warmup_headers = {}
-            if referer:
-                warmup_headers["Referer"] = referer
-
-            try:
-                warmup = session.get(
-                    warmup_url,
-                    headers=warmup_headers,
-                    timeout=(15, 30),
-                    allow_redirects=True,
-                )
-                print(
-                    f"  LSE warm-up: {warmup.status_code} "
-                    f"{warmup.url} ({len(warmup.content):,} bytes)"
-                )
-            except requests.RequestException as exc:
-                print(f"  LSE warm-up warning: {exc}")
-
-            time.sleep(random.uniform(0.6, 1.2))
-
-        response = session.get(
-            LSE_URL,
-            headers={"Referer": LSE_INDICES_URL},
-            timeout=(20, 60),
-            allow_redirects=True,
-        )
-
-        print(
-            f"  LSE constituents response: HTTP {response.status_code}; "
-            f"final URL: {response.url}; {len(response.content):,} bytes"
-        )
-
-        if response.status_code == 403:
-            server = response.headers.get("server", "unknown")
-            request_id = (
-                response.headers.get("cf-ray")
-                or response.headers.get("x-request-id")
-                or "not supplied"
-            )
-            raise RuntimeError(
-                "LSE returned HTTP 403 Forbidden even after browser-style "
-                "headers, cookies and a normal navigation sequence. "
-                f"Server={server}; request-id={request_id}. This normally means "
-                "the LSE site is blocking the GitHub-hosted runner's IP address, "
-                "rather than a parsing problem in screener.py."
-            )
-
-        response.raise_for_status()
-
-        content_type = response.headers.get("content-type", "").lower()
-        content_encoding = response.headers.get("content-encoding", "").lower()
-
-        if content_encoding not in ("", "identity", "gzip", "deflate"):
-            raise RuntimeError(
-                "LSE returned an unsupported compressed response: "
-                f"content-encoding={content_encoding!r}. "
-                "The request should only advertise gzip and deflate."
-            )
-
-        if not response.encoding:
-            response.encoding = response.apparent_encoding or "utf-8"
-
-        page_html = response.text
-
-        if "html" not in content_type and not page_html.lstrip().startswith("<"):
-            raise RuntimeError(
-                "LSE returned an unexpected response instead of HTML: "
-                f"content-type={content_type or 'not supplied'}; "
-                f"content-encoding={content_encoding or 'identity'}."
-            )
-        constituents = _parse_lse_constituents(page_html)
-
-        if len(constituents) < 100:
-            page_title = re.search(
-                r"<title[^>]*>(.*?)</title>",
-                page_html,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-            title = _clean_company_name(page_title.group(1)) if page_title else "unknown"
-            preview = re.sub(r"\s+", " ", _clean_company_name(page_html[:1000]))[:300]
-
-            raise RuntimeError(
-                f"Only parsed {len(constituents)} constituents from the LSE page. "
-                f"Page title: {title!r}. Response preview: {preview!r}. "
-                "The LSE page layout may have changed or an access-check page "
-                "may have been returned."
-            )
-
-        print(f"  Parsed {len(constituents)} LSE constituents.")
-        return constituents
-
-    finally:
-        session.close()
+    """Return a verified ticker-to-company mapping for the FTSE 250."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; FTSE250Screener/1.0)",
+        "Accept-Language": "en-GB,en;q=0.9",
+    }
+    response = requests.get(CONSTITUENTS_URL, headers=headers, timeout=(20, 60))
+    response.raise_for_status()
+    print(
+        f"  Constituents response: HTTP {response.status_code}; "
+        f"{len(response.content):,} bytes"
+    )
+    return _parse_ftse250_wikipedia(response.text)
 
 
 def epic_to_yahoo(epic):
@@ -561,17 +414,17 @@ def render_html(results, capital, risk_pct, generated_at):
           <div style="border-top:1px solid {HAIRLINE};padding:14px 18px;">
             <p style="font-size:13.5px;line-height:1.6;color:{PAPER};margin:0 0 12px;">{r['strategy']}</p>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px;">
-              <div><div style="font-size:11px;color:{MUTED};">Entry (last close)</div>
+              <div><div style="font-size:11px;color:{MUTED};">Reference close (not entry)</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;">£{entry_gbp:.2f}</div></div>
-              <div><div style="font-size:11px;color:{MUTED};">Sell / stop trigger</div>
+              <div><div style="font-size:11px;color:{MUTED};">Provisional stop</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:{BEAR};">£{stop_gbp:.2f}</div></div>
-              <div><div style="font-size:11px;color:{MUTED};">Take-profit target</div>
+              <div><div style="font-size:11px;color:{MUTED};">Reference 2R target</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:{BULL};">£{target_gbp:.2f}</div></div>
             </div>
             <div style="background:{INK};border:1px solid {HAIRLINE};border-radius:6px;padding:12px 14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-              <div><div style="font-size:11px;color:{MUTED};">Suggested size</div>
+              <div><div style="font-size:11px;color:{MUTED};">Indicative maximum size</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;">{shares} shares &middot; ~£{position_value:.2f}</div>
-                <div style="font-size:10px;color:{MUTED};margin-top:3px;">Risk at stop ~£{planned_risk:.2f}</div></div>
+                <div style="font-size:10px;color:{MUTED};margin-top:3px;">At reference close; recalculate from actual entry. Risk ~£{planned_risk:.2f}</div></div>
               <div style="text-align:right;"><div style="font-size:11px;color:{MUTED};">RSI(14) / vs SMA20 / volume</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;">
                   {f"{r['rsi']:.0f}" if r['rsi'] is not None else "—"} /
@@ -595,7 +448,7 @@ def render_html(results, capital, risk_pct, generated_at):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FTSE 250 &middot; Today's top five</title>
+<title>FTSE 250 &middot; Next-session watchlist</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:0; padding:0; }}
@@ -606,19 +459,26 @@ body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:
 <div class="wrap">
   <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid {HAIRLINE};padding-bottom:18px;margin-bottom:24px;flex-wrap:wrap;gap:8px;">
     <div>
-      <div style="font-size:11px;letter-spacing:.12em;color:{SALMON};text-transform:uppercase;margin-bottom:4px;">FTSE 250 &middot; 09:30 review</div>
-      <h1 style="font-family:'Fraunces',serif;font-size:28px;font-weight:600;margin:0;">Today's top five</h1>
+      <div style="font-size:11px;letter-spacing:.12em;color:{SALMON};text-transform:uppercase;margin-bottom:4px;">FTSE 250 &middot; Daily-candle watchlist</div>
+      <h1 style="font-family:'Fraunces',serif;font-size:28px;font-weight:600;margin:0;">Next-session watchlist</h1>
     </div>
-    <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:{MUTED};text-align:right;">{generated_at}</div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:{MUTED};text-align:right;">
+      <div>{generated_at}</div>
+      <div style="margin-top:6px;"><a href="backtest.html" style="color:{BRASS};text-decoration:none;">View backtest analysis</a></div>
+    </div>
   </div>
-  <div style="font-size:12px;color:{MUTED};margin-bottom:22px;">
-    Capital £{capital:,.2f} &middot; maximum risk £{risk_amount:.2f} per trade ({risk_pct:g}%) &middot; screened automatically each morning from the full FTSE 250.
+  <div style="font-size:12px;color:{MUTED};margin-bottom:14px;">
+    Capital £{capital:,.2f} &middot; maximum risk £{risk_amount:.2f} per trade ({risk_pct:g}%) &middot; screened from completed daily candles.
+  </div>
+  <div style="background:{PANEL};border:1px solid {HAIRLINE};border-radius:8px;padding:14px 16px;margin-bottom:22px;font-size:12px;line-height:1.6;color:{PAPER};">
+    <strong style="color:{SALMON};">Use as a watchlist, not an automatic order.</strong><br>
+    Before entering, confirm the next-session price has not opened beyond the stop, check the opening gap and liquidity, and require intraday confirmation such as a 5- or 15-minute close in the signal direction. Recalculate position size and the 2R target from the actual entry price.
   </div>
   {rows_html}
   <p style="font-size:11.5px;color:{MUTED};line-height:1.6;margin-top:24px;border-top:1px solid {HAIRLINE};padding-top:16px;">
-    Generated automatically from public market data. London-listed Yahoo Finance prices are converted from pence to pounds for display and sizing.
-    This is informational and educational only, not financial advice. Day trading carries a high risk of loss.
-    Verify prices independently before placing any trade.
+    Generated automatically from completed daily public-market data. London-listed Yahoo Finance prices are converted from pence to pounds for display.
+    The reference close, provisional stop, target and size are planning aids only; actual entry, target and size must be recalculated from the next-session execution price.
+    This is informational and educational only, not financial advice. Day trading carries a high risk of loss. Verify prices and liquidity independently.
   </p>
 </div>
 </body>
