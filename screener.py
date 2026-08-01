@@ -76,7 +76,7 @@ def _make_lse_session():
             "image/avif,image/webp,image/apng,*/*;q=0.8"
         ),
         "Accept-Language": "en-GB,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": "gzip, deflate",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
         "DNT": "1",
@@ -233,13 +233,32 @@ def fetch_ftse250_constituents():
         response.raise_for_status()
 
         content_type = response.headers.get("content-type", "").lower()
-        if "html" not in content_type and not response.text.lstrip().startswith("<"):
+        content_encoding = response.headers.get("content-encoding", "").lower()
+
+        # requests transparently decodes gzip and deflate. We deliberately do
+        # not advertise Brotli ("br"), because GitHub's Python environment may
+        # not have a Brotli decoder installed. Advertising br without support
+        # can produce an HTTP 200 response whose body appears as binary noise.
+        if content_encoding not in ("", "identity", "gzip", "deflate"):
             raise RuntimeError(
-                "LSE returned an unexpected response instead of HTML: "
-                f"content-type={content_type or 'not supplied'}."
+                "LSE returned an unsupported compressed response: "
+                f"content-encoding={content_encoding!r}. "
+                "The request should only advertise gzip and deflate."
             )
 
+        # Use the server-provided encoding where possible, otherwise default
+        # to UTF-8. LSE pages are HTML and should decode to readable markup.
+        if not response.encoding:
+            response.encoding = response.apparent_encoding or "utf-8"
+
         page_html = response.text
+
+        if "html" not in content_type and not page_html.lstrip().startswith("<"):
+            raise RuntimeError(
+                "LSE returned an unexpected response instead of HTML: "
+                f"content-type={content_type or 'not supplied'}; "
+                f"content-encoding={content_encoding or 'identity'}."
+            )
         constituents = _parse_lse_constituents(page_html)
 
         if len(constituents) < 100:
