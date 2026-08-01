@@ -23,6 +23,7 @@ import sys
 import math
 import datetime as dt
 import html as html_lib
+from html.parser import HTMLParser
 
 import requests
 import pandas as pd
@@ -84,61 +85,125 @@ def _normalise_column_name(column):
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
-def _parse_ftse250_wikipedia(page_html):
-    """Parse only the FTSE 250 constituents table from Wikipedia.
+class _WikipediaTableParser(HTMLParser):
+    """Collect HTML table text using only Python's standard library."""
 
-    The previous LSE page is a JavaScript application whose HTML payload can
-    contain unrelated security tables. That made it possible for AIM shares to
-    enter the universe. Wikipedia's FTSE 250 article contains a dedicated
-    constituents table with company and ticker columns, which is easier to
-    identify unambiguously. The code fails closed unless exactly one plausible
-    table of roughly 250 members is found.
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tables = []
+        self._table_depth = 0
+        self._current_table = None
+        self._current_row = None
+        self._current_cell = None
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag == "table":
+            self._table_depth += 1
+            if self._table_depth == 1:
+                self._current_table = []
+        elif self._table_depth == 1 and tag == "tr":
+            self._current_row = []
+        elif self._table_depth == 1 and tag in {"th", "td"}:
+            self._current_cell = []
+
+    def handle_data(self, data):
+        if self._table_depth == 1 and self._current_cell is not None:
+            self._current_cell.append(data)
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if self._table_depth == 1 and tag in {"th", "td"}:
+            if self._current_row is not None and self._current_cell is not None:
+                text = re.sub(r"\s+", " ", "".join(self._current_cell)).strip()
+                self._current_row.append(text)
+            self._current_cell = None
+        elif self._table_depth == 1 and tag == "tr":
+            if self._current_table is not None and self._current_row:
+                self._current_table.append(self._current_row)
+            self._current_row = None
+        elif tag == "table":
+            if self._table_depth == 1 and self._current_table:
+                self.tables.append(self._current_table)
+                self._current_table = None
+            if self._table_depth > 0:
+                self._table_depth -= 1
+
+
+def _normalise_header(value):
+    value = re.sub(r"\[[^]]*]", "", str(value))
+    return re.sub(r"\s+", " ", value).strip().lower()
+
+
+def _parse_ftse250_wikipedia(page_html):
+    """Parse the FTSE 250 constituent table without optional dependencies.
+
+    This intentionally avoids ``pandas.read_html`` because that requires an
+    optional parser such as lxml. Only tables with company and ticker headers
+    and roughly 250 constituent rows are considered. The function fails closed
+    if the table cannot be identified uniquely.
     """
+    parser = _WikipediaTableParser()
     try:
-        tables = pd.read_html(page_html)
-    except (ValueError, ImportError) as exc:
-        raise RuntimeError(f"Could not parse FTSE 250 constituent tables: {exc}") from exc
+        parser.feed(page_html)
+        parser.close()
+    except Exception as exc:
+        raise RuntimeError(f"Could not parse FTSE 250 constituent HTML: {exc}") from exc
 
     candidates = []
-    for table in tables:
-        table = table.copy()
-        table.columns = [_normalise_column_name(c) for c in table.columns]
-        cols = set(table.columns)
-
-        ticker_col = next((c for c in table.columns if c in {"ticker", "ticker symbol", "epic"}), None)
-        company_col = next((c for c in table.columns if c in {"company", "constituent", "name"}), None)
-        if not ticker_col or not company_col:
+    for rows in parser.tables:
+        if not rows:
             continue
-        if 240 <= len(table) <= 260:
-            candidates.append((table, ticker_col, company_col))
+
+        header_index = None
+        company_index = None
+        ticker_index = None
+
+        # Wikipedia can use one or more heading rows. Inspect the first few.
+        for row_index, row in enumerate(rows[:5]):
+            headers = [_normalise_header(cell) for cell in row]
+            company_index = next(
+                (i for i, h in enumerate(headers) if h in {"company", "constituent", "name"}),
+                None,
+            )
+            ticker_index = next(
+                (i for i, h in enumerate(headers) if h in {"ticker", "ticker symbol", "epic"}),
+                None,
+            )
+            if company_index is not None and ticker_index is not None:
+                header_index = row_index
+                break
+
+        if header_index is None:
+            continue
+
+        constituents = {}
+        for row in rows[header_index + 1:]:
+            if max(company_index, ticker_index) >= len(row):
+                continue
+
+            raw_ticker = re.sub(r"\[[^]]*]", "", row[ticker_index])
+            raw_name = re.sub(r"\[[^]]*]", "", row[company_index])
+            ticker = html_lib.unescape(raw_ticker).strip().upper().rstrip(".")
+            name = _clean_company_name(raw_name)
+
+            if not re.fullmatch(r"[A-Z0-9.]{1,10}", ticker):
+                continue
+            if not name:
+                continue
+            constituents[ticker] = name
+
+        if 240 <= len(constituents) <= 260:
+            candidates.append(constituents)
 
     if len(candidates) != 1:
-        detail = [(len(t), list(t.columns)) for t, _, _ in candidates]
+        counts = [len(candidate) for candidate in candidates]
         raise RuntimeError(
-            "Could not uniquely identify a valid FTSE 250 constituents table. "
-            f"Candidates: {detail}. Refusing to publish an unverified universe."
+            "Could not uniquely identify the FTSE 250 constituents table. "
+            f"Plausible table sizes: {counts}. Refusing to publish an unverified universe."
         )
 
-    table, ticker_col, company_col = candidates[0]
-    constituents = {}
-    for _, row in table.iterrows():
-        raw_ticker = html_lib.unescape(str(row.get(ticker_col, "")))
-        raw_name = str(row.get(company_col, ""))
-        ticker = re.sub(r"\[[^]]*]", "", raw_ticker).strip().upper().rstrip(".")
-        name = _clean_company_name(re.sub(r"\[[^]]*]", "", raw_name))
-
-        if not re.fullmatch(r"[A-Z0-9.]{1,10}", ticker):
-            continue
-        if not name or name.lower() == "nan":
-            continue
-        constituents[ticker] = name
-
-    if not 240 <= len(constituents) <= 260:
-        raise RuntimeError(
-            f"Parsed {len(constituents)} FTSE 250 constituents; expected roughly 250. "
-            "Refusing to continue with a potentially contaminated universe."
-        )
-
+    constituents = candidates[0]
     print(f"  Parsed {len(constituents)} verified FTSE 250 constituents.")
     return constituents
 
