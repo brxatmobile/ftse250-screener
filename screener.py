@@ -4,30 +4,29 @@ FTSE 250 daily candlestick screener.
 - Scrapes the current FTSE 250 constituent list from the London Stock Exchange
   site (so the universe stays current without hardcoding tickers).
 - Pulls ~2 months of daily OHLCV for every constituent via Yahoo Finance.
-- Scores each stock on candlestick pattern + RSI(14) + trend (SMA20) + volume.
-- Picks the top 5 and writes a self-contained HTML report to docs/index.html.
+- Ranks stocks pattern-first, then volume and SMA20 trend alignment; RSI is displayed but not scored.
+- Picks the top 5 as a next-session watchlist and writes a self-contained HTML report to docs/index.html.
 
 Run manually with:  python screener.py
 Configure capital / risk % via CAPITAL and RISK_PCT below, or environment
 variables CAPITAL and RISK_PCT (used by the GitHub Actions workflow).
 
 Yahoo Finance returns London Stock Exchange equity prices in pence. Pattern
-analysis remains in pence, but monetary display, position sizing and position
-value calculations are converted to pounds.
+analysis remains in pence, but monetary display and indicative sizing are
+converted to pounds. The completed daily candle is used only to build a
+next-session watchlist; it is not treated as an executable entry price.
 """
 
+# FILE_VERSION: PATTERN_VOLUME_TREND_LIVE_2026_08_02
 import os
 import re
 import sys
 import math
 import datetime as dt
 import html as html_lib
-import random
-import time
+from html.parser import HTMLParser
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -35,9 +34,6 @@ import yfinance as yf
 CAPITAL = float(os.environ.get("CAPITAL", "5000"))
 RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "docs", "index.html")
-LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
-LSE_HOME_URL = "https://www.lse.co.uk/"
-LSE_INDICES_URL = "https://www.lse.co.uk/indices/"
 
 # Yahoo Finance normally reports London-listed equity prices in GBX (pence).
 PENCE_PER_POUND = 100.0
@@ -80,25 +76,22 @@ def calculate_position_size(capital, risk_amount, entry_gbx, risk_per_share_gbx)
     return max(0, min(shares_by_risk, shares_by_capital))
 
 
+def _clean_company_name(value):
+    """Remove HTML markup/entities and tidy a company/security name."""
+    value = re.sub(r"<[^>]+>", " ", str(value))
+    value = html_lib.unescape(value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip(" \t\r\n-–|")
+
+
+LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
+LSE_EXPECTED_MIN = 200
+LSE_EXPECTED_MAX = 260
+
+
 def _make_lse_session():
-    """Create a retrying session with normal browser request headers."""
+    """Create a browser-like session for the static constituent page."""
     session = requests.Session()
-
-    retry = Retry(
-        total=4,
-        connect=4,
-        read=4,
-        status=4,
-        backoff_factor=1.5,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET", "HEAD"}),
-        respect_retry_after_header=True,
-        raise_on_status=False,
-    )
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=4)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-
     session.headers.update({
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -107,203 +100,145 @@ def _make_lse_session():
         ),
         "Accept": (
             "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,image/apng,*/*;q=0.8"
+            "image/avif,image/webp,*/*;q=0.8"
         ),
         "Accept-Language": "en-GB,en;q=0.9",
         "Accept-Encoding": "gzip, deflate",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
-        "DNT": "1",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
     })
     return session
 
 
-def _clean_company_name(value):
-    """Remove HTML tags/entities and tidy whitespace from a company name."""
-    value = re.sub(r"<[^>]+>", " ", value)
-    value = html_lib.unescape(value)
-    value = re.sub(r"\s+", " ", value).strip(" \t\r\n-–|")
-    return value
+def _extract_first_table_after_marker(page_html, marker):
+    """Return the first complete HTML table appearing after marker text."""
+    marker_match = re.search(
+        re.escape(marker).replace(r"\ ", r"\s+"),
+        page_html,
+        flags=re.IGNORECASE,
+    )
+    if not marker_match:
+        raise RuntimeError(
+            f"Could not find the FTSE 250 constituent marker {marker!r}."
+        )
+
+    table_start = page_html.find("<table", marker_match.end())
+    if table_start < 0:
+        raise RuntimeError("No constituent table found after the FTSE 250 marker.")
+
+    # Handle nested markup safely enough for ordinary HTML tables by counting
+    # table open/close tags from the first table after the marker.
+    token_re = re.compile(r"</?table\b[^>]*>", re.IGNORECASE)
+    depth = 0
+    for token in token_re.finditer(page_html, table_start):
+        if token.group(0).lower().startswith("</table"):
+            depth -= 1
+            if depth == 0:
+                return page_html[table_start:token.end()]
+        else:
+            depth += 1
+
+    raise RuntimeError("The FTSE 250 constituent table was not properly closed.")
 
 
-def _parse_lse_constituents(page_html):
+def _parse_ftse250_constituent_table(page_html):
     """
-    Parse ticker -> name pairs from LSE HTML.
-
-    Several patterns are supported because LSE has used slightly different
-    link capitalisation, attribute order and markup over time.
+    Parse only the table immediately following the statement that its shares
+    make up the FTSE 250. This deliberately ignores all sidebar, chat, news,
+    riser/faller and other share links elsewhere on the page.
     """
-    seen = {}
+    marker = "The following shares make up the FTSE 250"
+    table_html = _extract_first_table_after_marker(page_html, marker)
 
-    anchor_pattern = re.compile(
-        r"""<a\b[^>]*href=["'][^"']*
-            (?:SharePrice\.html|share-prices/[^"'?]+)
-            [^"']*[?&](?:amp;)?shareprice=([A-Z0-9.]{1,10})
-            [^"']*["'][^>]*>
-            (.*?)
-            </a>""",
-        re.IGNORECASE | re.DOTALL | re.VERBOSE,
+    constituents = {}
+    row_re = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+    anchor_re = re.compile(
+        r"<a\b[^>]*href=[\"'][^\"']*(?:shareprice=([A-Z0-9.]+)|/share-prices/[^\"']+)[^\"']*[\"'][^>]*>(.*?)</a>",
+        re.IGNORECASE | re.DOTALL,
     )
 
-    for match in anchor_pattern.finditer(page_html):
-        epic = html_lib.unescape(match.group(1)).upper().strip().rstrip(".")
-        label = _clean_company_name(match.group(2))
-        label = re.sub(
-            rf"\s*\(\s*{re.escape(epic)}\.?\s*\)\s*$",
-            "",
-            label,
-            flags=re.IGNORECASE,
-        ).strip()
+    for row_match in row_re.finditer(table_html):
+        row_html = row_match.group(1)
+        row_text = _clean_company_name(row_html)
 
-        if epic and label and epic not in seen:
-            seen[epic] = label
+        epic = None
+        name = None
 
-    if len(seen) < 100:
-        display_pattern = re.compile(
-            r"""<a\b[^>]*href=["'][^"']*(?:SharePrice\.html|share-prices/)[^"']*["'][^>]*>
-                (.*?)
-                \(\s*([A-Z0-9.]{1,10})\.?\s*\)
-                \s*</a>""",
-            re.IGNORECASE | re.DOTALL | re.VERBOSE,
+        # Preferred path: read the ticker from the shareprice query parameter
+        # and the company name from that same anchor.
+        for anchor_match in anchor_re.finditer(row_html):
+            query_epic = anchor_match.group(1)
+            label = _clean_company_name(anchor_match.group(2))
+            visible = re.search(r"^(.*?)\s*\(([A-Z0-9.]{1,10})\.?\)\s*$", label)
+
+            if query_epic:
+                epic = query_epic.upper().strip().rstrip(".")
+                name = label
+                if visible and visible.group(2).upper().rstrip(".") == epic:
+                    name = visible.group(1).strip()
+                break
+
+            if visible:
+                epic = visible.group(2).upper().strip().rstrip(".")
+                name = visible.group(1).strip()
+                break
+
+        # Fallback: the displayed Share cell always ends with "(EPIC)".
+        if not epic:
+            visible = re.search(
+                r"(.+?)\s*\(([A-Z0-9.]{1,10})\.?\)(?=\s|$)",
+                row_text,
+                flags=re.IGNORECASE,
+            )
+            if visible:
+                name = visible.group(1).strip()
+                epic = visible.group(2).upper().strip().rstrip(".")
+
+        if not epic or not name:
+            continue
+        if not re.fullmatch(r"[A-Z0-9.]{1,10}", epic):
+            continue
+        if epic.lower() in {"share", "price", "change"}:
+            continue
+
+        constituents.setdefault(epic, name)
+
+    count = len(constituents)
+    if not LSE_EXPECTED_MIN <= count <= LSE_EXPECTED_MAX:
+        sample = ", ".join(list(constituents)[:10]) or "none"
+        raise RuntimeError(
+            "The isolated FTSE 250 constituent table produced an unexpected "
+            f"count of {count}; expected {LSE_EXPECTED_MIN}-{LSE_EXPECTED_MAX}. "
+            f"Sample codes: {sample}. Refusing to publish an unverified universe."
         )
-        for match in display_pattern.finditer(page_html):
-            name = _clean_company_name(match.group(1))
-            epic = html_lib.unescape(match.group(2)).upper().strip().rstrip(".")
-            if epic and name and epic not in seen:
-                seen[epic] = name
 
-    if len(seen) < 100:
-        decoded = html_lib.unescape(page_html).replace("\\u0026", "&").replace("\\/", "/")
-        query_pattern = re.compile(
-            r"""shareprice=([A-Z0-9.]{1,10})
-                (?:&|&amp;)share=[^"'<>\\\s]+
-                [^>]{0,500}>
-                \s*([^<>{}\[\]]{2,120}?)
-                \s*\(\s*\1\.?\s*\)""",
-            re.IGNORECASE | re.DOTALL | re.VERBOSE,
-        )
-        for match in query_pattern.finditer(decoded):
-            epic = match.group(1).upper().strip().rstrip(".")
-            name = _clean_company_name(match.group(2))
-            if epic and name and epic not in seen:
-                seen[epic] = name
-
-    return seen
+    return constituents
 
 
 def fetch_ftse250_constituents():
     """
-    Scrape ticker -> name pairs from the LSE FTSE 250 constituents page.
+    Fetch the FTSE 250 universe automatically from the static lse.co.uk page.
 
-    The request first visits the LSE home and indices pages so the session
-    receives ordinary site cookies before requesting the constituent page.
+    Only the first table immediately following the exact sentence
+    'The following shares make up the FTSE 250' is parsed. No links outside
+    that table are eligible, which prevents AIM/sidebar shares from entering.
     """
     session = _make_lse_session()
-
     try:
-        for warmup_url, referer in (
-            (LSE_HOME_URL, None),
-            (LSE_INDICES_URL, LSE_HOME_URL),
-        ):
-            warmup_headers = {}
-            if referer:
-                warmup_headers["Referer"] = referer
-
-            try:
-                warmup = session.get(
-                    warmup_url,
-                    headers=warmup_headers,
-                    timeout=(15, 30),
-                    allow_redirects=True,
-                )
-                print(
-                    f"  LSE warm-up: {warmup.status_code} "
-                    f"{warmup.url} ({len(warmup.content):,} bytes)"
-                )
-            except requests.RequestException as exc:
-                print(f"  LSE warm-up warning: {exc}")
-
-            time.sleep(random.uniform(0.6, 1.2))
-
-        response = session.get(
-            LSE_URL,
-            headers={"Referer": LSE_INDICES_URL},
-            timeout=(20, 60),
-            allow_redirects=True,
-        )
-
+        response = session.get(LSE_URL, timeout=(20, 60), allow_redirects=True)
         print(
-            f"  LSE constituents response: HTTP {response.status_code}; "
-            f"final URL: {response.url}; {len(response.content):,} bytes"
+            f"  Constituents response: HTTP {response.status_code}; "
+            f"{len(response.content):,} bytes; final URL: {response.url}"
         )
-
-        if response.status_code == 403:
-            server = response.headers.get("server", "unknown")
-            request_id = (
-                response.headers.get("cf-ray")
-                or response.headers.get("x-request-id")
-                or "not supplied"
-            )
-            raise RuntimeError(
-                "LSE returned HTTP 403 Forbidden even after browser-style "
-                "headers, cookies and a normal navigation sequence. "
-                f"Server={server}; request-id={request_id}. This normally means "
-                "the LSE site is blocking the GitHub-hosted runner's IP address, "
-                "rather than a parsing problem in screener.py."
-            )
-
         response.raise_for_status()
-
-        content_type = response.headers.get("content-type", "").lower()
-        content_encoding = response.headers.get("content-encoding", "").lower()
-
-        if content_encoding not in ("", "identity", "gzip", "deflate"):
-            raise RuntimeError(
-                "LSE returned an unsupported compressed response: "
-                f"content-encoding={content_encoding!r}. "
-                "The request should only advertise gzip and deflate."
-            )
-
-        if not response.encoding:
-            response.encoding = response.apparent_encoding or "utf-8"
-
-        page_html = response.text
-
-        if "html" not in content_type and not page_html.lstrip().startswith("<"):
-            raise RuntimeError(
-                "LSE returned an unexpected response instead of HTML: "
-                f"content-type={content_type or 'not supplied'}; "
-                f"content-encoding={content_encoding or 'identity'}."
-            )
-        constituents = _parse_lse_constituents(page_html)
-
-        if len(constituents) < 100:
-            page_title = re.search(
-                r"<title[^>]*>(.*?)</title>",
-                page_html,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-            title = _clean_company_name(page_title.group(1)) if page_title else "unknown"
-            preview = re.sub(r"\s+", " ", _clean_company_name(page_html[:1000]))[:300]
-
-            raise RuntimeError(
-                f"Only parsed {len(constituents)} constituents from the LSE page. "
-                f"Page title: {title!r}. Response preview: {preview!r}. "
-                "The LSE page layout may have changed or an access-check page "
-                "may have been returned."
-            )
-
-        print(f"  Parsed {len(constituents)} LSE constituents.")
+        constituents = _parse_ftse250_constituent_table(response.text)
+        print(
+            f"  Parsed {len(constituents)} FTSE 250 constituents from the "
+            "isolated constituent table."
+        )
         return constituents
-
     finally:
         session.close()
-
 
 def epic_to_yahoo(epic):
     return epic.rstrip(".") + ".L"
@@ -430,38 +365,36 @@ def analyze(epic, name, df):
     last = candles[-1]
     bull = pattern["dir"] == "bull"
 
-    score = pattern["base"] * 0.55
-    if r is not None:
-        if bull and r < 35:
-            score += 1.8
-        elif bull and r < 55:
-            score += 0.8
-        elif bull and r > 72:
-            score -= 1.6
-        elif not bull and r > 65:
-            score += 1.8
-        elif not bull and r > 45:
-            score += 0.8
-        elif not bull and r < 28:
-            score -= 1.6
+    # Research-backed live ranking:
+    #   1) pattern quality is the primary factor;
+    #   2) volume is the strongest secondary ranking input;
+    #   3) SMA20 alignment receives a modest bonus;
+    #   4) RSI is retained for display only and does not alter the score.
+    pattern_base = float(pattern["base"])
+    strong_pattern = pattern_base >= 7.0
 
-    if s20 is not None:
-        if bull and last["close"] > s20:
-            score += 1.2
-        if bull and last["close"] < s20:
-            score -= 0.8
-        if not bull and last["close"] < s20:
-            score += 1.2
-        if not bull and last["close"] > s20:
-            score -= 0.8
+    trend_aligned = bool(
+        s20 is not None
+        and ((bull and last["close"] > s20) or ((not bull) and last["close"] < s20))
+    )
 
     vol_ratio = (last_vol / avg_vol) if avg_vol else 1.0
-    if vol_ratio > 1.5:
-        score += 1.3
-    elif vol_ratio < 0.7:
-        score -= 0.6
 
-    score = max(0.0, min(10.0, score))
+    raw_score = pattern_base
+    if strong_pattern:
+        raw_score += 3.0
+
+    if vol_ratio >= 2.0:
+        raw_score += 3.0
+    elif vol_ratio >= 1.5:
+        raw_score += 1.0
+
+    if trend_aligned:
+        raw_score += 1.0
+
+    # Maximum possible raw score is 16 (9 + 3 + 3 + 1).
+    # Convert to the existing 0-10 display scale without changing ranking.
+    score = max(0.0, min(10.0, raw_score * 10.0 / 16.0))
 
     # These values remain in pence because all Yahoo .L OHLC data is in pence.
     pattern_low = min(candles[-1]["low"], candles[-2]["low"])
@@ -476,9 +409,12 @@ def analyze(epic, name, df):
         "name": name,
         "score": score,
         "pattern": pattern["name"],
+        "pattern_base": pattern_base,
+        "strong_pattern": strong_pattern,
         "direction": "Long" if bull else "Short",
         "rsi": r,
         "sma20": s20,
+        "trend_aligned": trend_aligned,
         "vol_ratio": vol_ratio,
         "entry": entry,
         "stop": stop,
@@ -561,17 +497,17 @@ def render_html(results, capital, risk_pct, generated_at):
           <div style="border-top:1px solid {HAIRLINE};padding:14px 18px;">
             <p style="font-size:13.5px;line-height:1.6;color:{PAPER};margin:0 0 12px;">{r['strategy']}</p>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px;">
-              <div><div style="font-size:11px;color:{MUTED};">Entry (last close)</div>
+              <div><div style="font-size:11px;color:{MUTED};">Reference close (not entry)</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;">£{entry_gbp:.2f}</div></div>
-              <div><div style="font-size:11px;color:{MUTED};">Sell / stop trigger</div>
+              <div><div style="font-size:11px;color:{MUTED};">Provisional stop</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:{BEAR};">£{stop_gbp:.2f}</div></div>
-              <div><div style="font-size:11px;color:{MUTED};">Take-profit target</div>
+              <div><div style="font-size:11px;color:{MUTED};">Reference 2R target</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;color:{BULL};">£{target_gbp:.2f}</div></div>
             </div>
             <div style="background:{INK};border:1px solid {HAIRLINE};border-radius:6px;padding:12px 14px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-              <div><div style="font-size:11px;color:{MUTED};">Suggested size</div>
+              <div><div style="font-size:11px;color:{MUTED};">Indicative maximum size</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;">{shares} shares &middot; ~£{position_value:.2f}</div>
-                <div style="font-size:10px;color:{MUTED};margin-top:3px;">Risk at stop ~£{planned_risk:.2f}</div></div>
+                <div style="font-size:10px;color:{MUTED};margin-top:3px;">At reference close; recalculate from actual entry. Risk ~£{planned_risk:.2f}</div></div>
               <div style="text-align:right;"><div style="font-size:11px;color:{MUTED};">RSI(14) / vs SMA20 / volume</div>
                 <div style="font-family:'IBM Plex Mono',monospace;font-size:14px;">
                   {f"{r['rsi']:.0f}" if r['rsi'] is not None else "—"} /
@@ -595,14 +531,14 @@ def render_html(results, capital, risk_pct, generated_at):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FTSE 250 &middot; Today's top five</title>
+<title>FTSE 250 &middot; Next-session watchlist</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:0; padding:0; }}
 .wrap {{ max-width:760px; margin:0 auto; padding:32px 20px 60px; box-sizing:border-box; }}
-.site-nav {{ display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px; }}
-.site-nav a {{ text-decoration:none;border:1px solid {HAIRLINE};border-radius:999px;padding:8px 12px;color:{PAPER};font-size:13px; }}
-.site-nav a.active {{ border-color:{BRASS};color:{BRASS}; }}
+.site-nav {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }}
+.site-nav a {{ text-decoration:none; border:1px solid {HAIRLINE}; border-radius:999px; padding:8px 12px; color:{PAPER}; font-size:13px; }}
+.site-nav a.active {{ border-color:{BRASS}; color:{BRASS}; }}
 </style>
 </head>
 <body>
@@ -610,19 +546,26 @@ body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:
   <nav class="site-nav"><a class="active" href="index.html">Daily screener</a><a href="backtest.html">Backtest</a><a href="intraday.html">Intraday</a></nav>
   <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid {HAIRLINE};padding-bottom:18px;margin-bottom:24px;flex-wrap:wrap;gap:8px;">
     <div>
-      <div style="font-size:11px;letter-spacing:.12em;color:{SALMON};text-transform:uppercase;margin-bottom:4px;">FTSE 250 &middot; 09:30 review</div>
-      <h1 style="font-family:'Fraunces',serif;font-size:28px;font-weight:600;margin:0;">Today's top five</h1>
+      <div style="font-size:11px;letter-spacing:.12em;color:{SALMON};text-transform:uppercase;margin-bottom:4px;">FTSE 250 &middot; Daily-candle watchlist</div>
+      <h1 style="font-family:'Fraunces',serif;font-size:28px;font-weight:600;margin:0;">Next-session watchlist</h1>
     </div>
-    <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:{MUTED};text-align:right;">{generated_at}</div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:{MUTED};text-align:right;">
+      <div>{generated_at}</div>
+      <div style="margin-top:6px;"><a href="backtest.html" style="color:{BRASS};text-decoration:none;">View backtest analysis</a></div>
+    </div>
   </div>
-  <div style="font-size:12px;color:{MUTED};margin-bottom:22px;">
-    Capital £{capital:,.2f} &middot; maximum risk £{risk_amount:.2f} per trade ({risk_pct:g}%) &middot; screened automatically each morning from the full FTSE 250.
+  <div style="font-size:12px;color:{MUTED};margin-bottom:14px;">
+    Capital £{capital:,.2f} &middot; maximum risk £{risk_amount:.2f} per trade ({risk_pct:g}%) &middot; screened from completed daily candles.
+  </div>
+  <div style="background:{PANEL};border:1px solid {HAIRLINE};border-radius:8px;padding:14px 16px;margin-bottom:22px;font-size:12px;line-height:1.6;color:{PAPER};">
+    <strong style="color:{SALMON};">Use as a watchlist, not an automatic order.</strong><br>
+    Before entering, confirm the next-session price has not opened beyond the stop, check the opening gap and liquidity, and require intraday confirmation such as a 5- or 15-minute close in the signal direction. Recalculate position size and the 2R target from the actual entry price.
   </div>
   {rows_html}
   <p style="font-size:11.5px;color:{MUTED};line-height:1.6;margin-top:24px;border-top:1px solid {HAIRLINE};padding-top:16px;">
-    Generated automatically from public market data. London-listed Yahoo Finance prices are converted from pence to pounds for display and sizing.
-    This is informational and educational only, not financial advice. Day trading carries a high risk of loss.
-    Verify prices independently before placing any trade.
+    Generated automatically from completed daily public-market data. London-listed Yahoo Finance prices are converted from pence to pounds for display.
+    The reference close, provisional stop, target and size are planning aids only; actual entry, target and size must be recalculated from the next-session execution price.
+    This is informational and educational only, not financial advice. Day trading carries a high risk of loss. Verify prices and liquidity independently.
   </p>
 </div>
 </body>
