@@ -1,0 +1,76 @@
+name: FTSE Opening-Hour Day-Trade Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Build or expire the intraday report"
+        required: true
+        type: choice
+        options:
+          - analyse
+          - expire
+        default: analyse
+  schedule:
+    # GitHub schedules use UTC. Both seasonal possibilities are included.
+    # The Python script checks Europe/London time and exits on the duplicate run.
+    - cron: "5 8 * * 1-5"   # 09:05 BST
+    - cron: "5 9 * * 1-5"   # 09:05 GMT or 10:05 BST
+    - cron: "5 10 * * 1-5"  # 10:05 GMT
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ftse-intraday-report
+  cancel-in-progress: false
+
+jobs:
+  update-intraday-page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install pandas numpy requests yfinance
+          fi
+
+      - name: Build or expire intraday report
+        env:
+          CAPITAL: ${{ vars.CAPITAL }}
+          RISK_PCT: ${{ vars.RISK_PCT }}
+          TOP_N: ${{ vars.TOP_N }}
+          MAX_GAP_PCT: ${{ vars.MAX_GAP_PCT }}
+          TARGET_R: ${{ vars.TARGET_R }}
+          MIN_INTRADAY_SCORE: ${{ vars.MIN_INTRADAY_SCORE }}
+          MIN_OPENING_VOLUME_RATIO: ${{ vars.MIN_OPENING_VOLUME_RATIO }}
+          MAX_VWAP_DISTANCE_PCT: ${{ vars.MAX_VWAP_DISTANCE_PCT }}
+          ENTRY_BUFFER_PCT: ${{ vars.ENTRY_BUFFER_PCT }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            python intraday_daytrader.py --mode "${{ inputs.mode }}" --force
+          else
+            python intraday_daytrader.py --mode auto
+          fi
+
+      - name: Publish intraday page
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/intraday.html
+          git commit -m "Update FTSE intraday day-trade report" || echo "No report changes"
+          git push
