@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FTSE 250 scoring research</title>
+<style>
+:root{--ink:#12161f;--panel:#1b2129;--line:#303843;--paper:#ece7da;--muted:#9aa1ac;--gold:#c9a24b;--green:#5eb77c;--red:#dc6a5d}
+*{box-sizing:border-box} body{margin:0;background:var(--ink);color:var(--paper);font-family:Arial,sans-serif} .wrap{max-width:1120px;margin:auto;padding:22px 14px 50px}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px} nav a{color:var(--paper);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:13px} nav a.active{color:var(--gold);border-color:var(--gold)}
+h1{margin:4px 0} .muted,.sub{color:var(--muted)} .sub{margin-bottom:18px;font-size:13px} .callout{border:1px solid var(--gold);background:var(--panel);padding:16px;border-radius:10px;margin:18px 0} .callout h2{margin:5px 0 8px} .eyebrow{color:var(--gold);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0} .stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px} .label{color:var(--muted);font-size:11px;text-transform:uppercase} .value{font-size:19px;margin-top:5px}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:12px 0 22px} table{width:100%;border-collapse:collapse;min-width:900px;background:var(--panel)} th,td{padding:10px;border-bottom:1px solid var(--line);font-size:13px;text-align:right;white-space:nowrap} th:first-child,td:first-child{text-align:left} th{color:var(--muted);font-size:11px;text-transform:uppercase} .positive{color:var(--green)} .negative{color:var(--red)} .neutral{color:var(--muted)} .note{font-size:12px;line-height:1.5;color:var(--muted)}
+@media(max-width:650px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))} h1{font-size:24px}}
+</style></head><body><main class="wrap">
+<nav><a href="index.html">Daily screener</a><a href="backtest.html">Backtest</a><a class="active" href="backtest-research.html">Research</a><a href="intraday.html">Intraday</a></nav>
+<h1>Scoring-model research backtest</h1><div class="sub">Generated Sun 02 Aug 2026, 12:43 UTC · 2026-03-27 to 2026-07-16 · first 70% research / final 30% holdout</div>
+<div class="grid">
+<div class="stat"><div class="label">Signal days</div><div class="value">75</div></div>
+<div class="stat"><div class="label">Research days</div><div class="value">52</div></div>
+<div class="stat"><div class="label">Holdout days</div><div class="value">23</div></div>
+<div class="stat"><div class="label">Best holdout model</div><div class="value" style="font-size:15px">Trend + volume</div></div>
+</div>
+
+        <section class="callout">
+          <div class="eyebrow">Strongest measured factor in the holdout period</div>
+          <h2>Strong pattern (base ≥ 7)</h2>
+          <p>Average improvement: <strong>+0.12R per candidate</strong>. Confidence: <strong>High</strong>.</p>
+          <p class="muted">Factor present: 897 candidates at +0.15R average; absent: 932 candidates at +0.03R average.</p>
+        </section>
+<h2>Current score versus fixed reweighting models</h2>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Full P/L</th><th>Full win</th><th>Full PF</th><th>Full DD</th><th>Research P/L</th><th>Holdout P/L</th><th>Holdout win</th><th>Holdout PF</th><th>vs current</th></tr></thead><tbody>
+        <tr>
+          <td><strong>Current score</strong></td>
+          <td>£-2.89</td><td>44.5%</td><td>0.96</td><td>£11.13</td>
+          <td>£+1.46</td>
+          <td>£-4.35</td><td>38.2%</td><td>0.83</td>
+          <td class="neutral">£+0.00</td>
+        </tr>
+        <tr>
+          <td><strong>Pattern weighted</strong></td>
+          <td>£-3.38</td><td>44.8%</td><td>0.95</td><td>£12.19</td>
+          <td>£+0.19</td>
+          <td>£-3.57</td><td>39.8%</td><td>0.86</td>
+          <td class="positive">£+0.77</td>
+        </tr>
+        <tr>
+          <td><strong>RSI weighted</strong></td>
+          <td>£-9.43</td><td>45.3%</td><td>0.87</td><td>£16.44</td>
+          <td>£+4.70</td>
+          <td>£-14.13</td><td>38.1%</td><td>0.55</td>
+          <td class="negative">£-9.78</td>
+        </tr>
+        <tr>
+          <td><strong>Trend weighted</strong></td>
+          <td>£-1.26</td><td>45.2%</td><td>0.98</td><td>£11.27</td>
+          <td>£+1.99</td>
+          <td>£-3.24</td><td>38.8%</td><td>0.86</td>
+          <td class="positive">£+1.10</td>
+        </tr>
+        <tr>
+          <td><strong>Volume weighted</strong></td>
+          <td>£+3.44</td><td>44.8%</td><td>1.05</td><td>£10.48</td>
+          <td>£+2.84</td>
+          <td>£+0.60</td><td>42.2%</td><td>1.03</td>
+          <td class="positive">£+4.95</td>
+        </tr>
+        <tr>
+          <td><strong>Trend + volume</strong></td>
+          <td>£+3.71</td><td>45.0%</td><td>1.05</td><td>£9.94</td>
+          <td>£+1.00</td>
+          <td>£+2.71</td><td>41.9%</td><td>1.12</td>
+          <td class="positive">£+7.05</td>
+        </tr></tbody></table></div>
+<h2>Holdout factor evidence</h2>
+<div class="table-wrap"><table><thead><tr><th>Factor</th><th>Present n</th><th>Present avg</th><th>Absent avg</th><th>Effect</th><th>95% bootstrap interval</th><th>Confidence</th></tr></thead><tbody>
+        <tr><td>Strong pattern (base ≥ 7)</td><td>897</td>
+        <td>+0.15R</td><td>+0.03R</td>
+        <td>+0.12R</td><td>+0.05R to +0.19R</td><td>High</td></tr>
+        <tr><td>Volume ≥ 2.0× average</td><td>118</td>
+        <td>+0.16R</td><td>+0.08R</td>
+        <td>+0.07R</td><td>-0.06R to +0.22R</td><td>Low</td></tr>
+        <tr><td>Volume ≥ 1.5× average</td><td>247</td>
+        <td>+0.09R</td><td>+0.09R</td>
+        <td>+0.01R</td><td>-0.09R to +0.12R</td><td>Low</td></tr>
+        <tr><td>SMA20 trend alignment</td><td>1020</td>
+        <td>+0.09R</td><td>+0.09R</td>
+        <td>-0.01R</td><td>-0.08R to +0.07R</td><td>No positive evidence</td></tr>
+        <tr><td>Extreme RSI</td><td>281</td>
+        <td>+0.05R</td><td>+0.09R</td>
+        <td>-0.04R</td><td>-0.15R to +0.07R</td><td>No positive evidence</td></tr>
+        <tr><td>Supportive RSI</td><td>1098</td>
+        <td>+0.06R</td><td>+0.12R</td>
+        <td>-0.06R</td><td>-0.13R to +0.01R</td><td>No positive evidence</td></tr></tbody></table></div>
+<p class="note">The alternative models change only which five candidates are selected each day. Entry, stop, target, spread, commission and same-day exit rules remain identical. Daily bars cannot determine which occurred first when stop and target are both touched; those cases are scored as stops. No live screener weights are changed by this research script.</p>
+</main></body></html>
