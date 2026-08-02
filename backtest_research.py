@@ -11,7 +11,7 @@ and reports performance separately on the final 30% holdout period.
 It writes docs/backtest-research.html. It does not modify screener.py or the live scoring.
 """
 
-# FILE_VERSION: BACKTEST_RESEARCH_LONG_ONLY_RANK1_2026_08_02
+# FILE_VERSION: BACKTEST_RESEARCH_LONG_ONLY_RANK1_OUTPUT_FIX_2026_08_02
 
 import argparse
 import datetime as dt
@@ -47,7 +47,7 @@ RISK_PCT = env_float("RISK_PCT", 1)
 SPREAD_BPS = env_float("SPREAD_BPS", 20)
 COMMISSION_PER_TRADE = env_float("COMMISSION_PER_TRADE", 0)
 BACKTEST_DAYS = env_int("BACKTEST_DAYS", 75)
-OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "docs", "backtest-research.html")
+OUTPUT_PATH = os.path.abspath(os.path.join(os.getcwd(), "docs", "backtest-research.html"))
 
 PATTERN_BASE = {
     "Morning star": 9.0,
@@ -451,6 +451,9 @@ h1{{margin:4px 0}} .muted,.sub{{color:var(--muted)}} .sub{{margin-bottom:18px;fo
 
 
 def main():
+    print("Running BACKTEST_RESEARCH_LONG_ONLY_RANK1_OUTPUT_FIX_2026_08_02")
+    print(f"Working directory: {os.getcwd()}")
+    print(f"Research output: {OUTPUT_PATH}")
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=None)
     parser.add_argument("--start", type=str, default=None)
