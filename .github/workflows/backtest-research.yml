@@ -19,6 +19,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Confirm research files
+        run: |
+          pwd
+          ls -la
+          test -f backtest_research.py
+          grep -q "BACKTEST_RESEARCH_LONG_ONLY_RANK1_OUTPUT_FIX_2026_08_02" backtest_research.py
+          echo "Correct rank-1 long research script found"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -34,26 +42,30 @@ jobs:
             pip install pandas numpy requests yfinance
           fi
 
-      - name: Run scoring research backtest
+      - name: Run rank-1 long research backtest
         env:
           CAPITAL: ${{ vars.CAPITAL }}
           RISK_PCT: ${{ vars.RISK_PCT }}
           BACKTEST_DAYS: ${{ vars.BACKTEST_DAYS }}
           SPREAD_BPS: ${{ vars.SPREAD_BPS }}
           COMMISSION_PER_TRADE: ${{ vars.COMMISSION_PER_TRADE }}
-        run: python backtest_research.py
-
-      - name: Verify research output
         run: |
-          test -f docs/backtest-research.html
+          python -u ./backtest_research.py
+          echo "Files created under docs:"
+          find docs -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Verify rank-1 research output
+        run: |
+          test -s docs/backtest-research.html
           grep -q "Scoring-model research backtest" docs/backtest-research.html
-          grep -q "Current score versus fixed reweighting models" docs/backtest-research.html
-          grep -q "Holdout factor evidence" docs/backtest-research.html
+          grep -q "Rank 1 long" docs/backtest-research.html
+          grep -q "Top 5 short" docs/backtest-research.html
+          echo "Rank-1 long research report verified"
 
       - name: Publish research page
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/backtest-research.html
-          git commit -m "Update FTSE scoring research report" || echo "No research report changes"
+          git commit -m "Update rank-1 long FTSE research report" || echo "No research report changes"
           git push
