@@ -11,7 +11,7 @@ h1{margin:4px 0} .muted,.sub{color:var(--muted)} .sub{margin-bottom:18px;font-si
 @media(max-width:650px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))} h1{font-size:24px}}
 </style></head><body><main class="wrap">
 <nav><a href="index.html">Daily screener</a><a href="backtest.html">Backtest</a><a class="active" href="backtest-research.html">Research</a><a href="intraday.html">Intraday</a></nav>
-<h1>Scoring-model research backtest</h1><div class="sub">Generated Sun 02 Aug 2026, 12:43 UTC · 2026-03-27 to 2026-07-16 · first 70% research / final 30% holdout</div>
+<h1>Scoring-model research backtest</h1><div class="sub">Generated Sun 02 Aug 2026, 15:12 UTC · 2026-04-15 to 2026-07-30 · first 70% research / final 30% holdout</div>
 <div class="grid">
 <div class="stat"><div class="label">Signal days</div><div class="value">75</div></div>
 <div class="stat"><div class="label">Research days</div><div class="value">52</div></div>
@@ -20,74 +20,268 @@ h1{margin:4px 0} .muted,.sub{color:var(--muted)} .sub{margin-bottom:18px;font-si
 </div>
 
         <section class="callout">
-          <div class="eyebrow">Strongest measured factor in the holdout period</div>
-          <h2>Strong pattern (base ≥ 7)</h2>
-          <p>Average improvement: <strong>+0.12R per candidate</strong>. Confidence: <strong>High</strong>.</p>
-          <p class="muted">Factor present: 897 candidates at +0.15R average; absent: 932 candidates at +0.03R average.</p>
+          <div class="eyebrow">Strongest measured factor for long candidates in the holdout period</div>
+          <h2>Volume ≥ 2.0× average</h2>
+          <p>Average improvement: <strong>+0.14R per candidate</strong>. Confidence: <strong>Low</strong>.</p>
+          <p class="muted">Factor present: 50 candidates at +0.26R average; absent: 722 candidates at +0.12R average.</p>
         </section>
-<h2>Current score versus fixed reweighting models</h2>
+<h2>Long-only model comparison: top five long candidates</h2>
 <div class="table-wrap"><table><thead><tr><th>Model</th><th>Full P/L</th><th>Full win</th><th>Full PF</th><th>Full DD</th><th>Research P/L</th><th>Holdout P/L</th><th>Holdout win</th><th>Holdout PF</th><th>vs current</th></tr></thead><tbody>
         <tr>
           <td><strong>Current score</strong></td>
-          <td>£-2.89</td><td>44.5%</td><td>0.96</td><td>£11.13</td>
-          <td>£+1.46</td>
-          <td>£-4.35</td><td>38.2%</td><td>0.83</td>
+          <td>£+1.22</td><td>46.3%</td><td>1.02</td><td>£9.19</td>
+          <td>£-4.40</td>
+          <td>£+5.62</td><td>47.7%</td><td>1.33</td>
           <td class="neutral">£+0.00</td>
         </tr>
         <tr>
           <td><strong>Pattern weighted</strong></td>
-          <td>£-3.38</td><td>44.8%</td><td>0.95</td><td>£12.19</td>
-          <td>£+0.19</td>
-          <td>£-3.57</td><td>39.8%</td><td>0.86</td>
-          <td class="positive">£+0.77</td>
+          <td>£-2.34</td><td>45.0%</td><td>0.96</td><td>£9.26</td>
+          <td>£-4.43</td>
+          <td>£+2.09</td><td>47.2%</td><td>1.12</td>
+          <td class="negative">£-3.53</td>
         </tr>
         <tr>
           <td><strong>RSI weighted</strong></td>
-          <td>£-9.43</td><td>45.3%</td><td>0.87</td><td>£16.44</td>
-          <td>£+4.70</td>
-          <td>£-14.13</td><td>38.1%</td><td>0.55</td>
-          <td class="negative">£-9.78</td>
+          <td>£-10.37</td><td>44.7%</td><td>0.84</td><td>£14.68</td>
+          <td>£-10.62</td>
+          <td>£+0.25</td><td>42.3%</td><td>1.01</td>
+          <td class="negative">£-5.36</td>
         </tr>
         <tr>
           <td><strong>Trend weighted</strong></td>
-          <td>£-1.26</td><td>45.2%</td><td>0.98</td><td>£11.27</td>
-          <td>£+1.99</td>
-          <td>£-3.24</td><td>38.8%</td><td>0.86</td>
-          <td class="positive">£+1.10</td>
+          <td>£-0.57</td><td>45.2%</td><td>0.99</td><td>£9.44</td>
+          <td>£-6.26</td>
+          <td>£+5.69</td><td>47.7%</td><td>1.33</td>
+          <td class="positive">£+0.07</td>
         </tr>
         <tr>
           <td><strong>Volume weighted</strong></td>
-          <td>£+3.44</td><td>44.8%</td><td>1.05</td><td>£10.48</td>
-          <td>£+2.84</td>
-          <td>£+0.60</td><td>42.2%</td><td>1.03</td>
-          <td class="positive">£+4.95</td>
+          <td>£+1.74</td><td>45.8%</td><td>1.03</td><td>£10.00</td>
+          <td>£-6.11</td>
+          <td>£+7.85</td><td>47.7%</td><td>1.49</td>
+          <td class="positive">£+2.24</td>
         </tr>
         <tr>
           <td><strong>Trend + volume</strong></td>
-          <td>£+3.71</td><td>45.0%</td><td>1.05</td><td>£9.94</td>
-          <td>£+1.00</td>
-          <td>£+2.71</td><td>41.9%</td><td>1.12</td>
-          <td class="positive">£+7.05</td>
+          <td>£-2.98</td><td>44.6%</td><td>0.95</td><td>£13.22</td>
+          <td>£-12.02</td>
+          <td>£+9.04</td><td>48.6%</td><td>1.59</td>
+          <td class="positive">£+3.43</td>
         </tr></tbody></table></div>
-<h2>Holdout factor evidence</h2>
+<h2>Rank and direction breakdown — holdout period</h2>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Selection</th><th>Signals</th><th>Executed</th><th>Wins</th><th>Win rate</th><th>P/L</th><th>Average R</th><th>PF</th><th>Drawdown</th></tr></thead><tbody>
+            <tr class="">
+              <td><strong>Current score</strong></td>
+              <td>Rank 1 long</td>
+              <td>23</td><td>20</td><td>11</td>
+              <td>55.0%</td><td>£+1.25</td>
+              <td>+0.33R</td><td>1.35</td>
+              <td>£2.00</td>
+            </tr>
+            <tr class="">
+              <td><strong>Current score</strong></td>
+              <td>Ranks 2–5 long</td>
+              <td>92</td><td>87</td><td>40</td>
+              <td>46.0%</td><td>£+4.37</td>
+              <td>+0.07R</td><td>1.32</td>
+              <td>£5.04</td>
+            </tr>
+            <tr class="">
+              <td><strong>Current score</strong></td>
+              <td>Top 5 long</td>
+              <td>115</td><td>107</td><td>51</td>
+              <td>47.7%</td><td>£+5.62</td>
+              <td>+0.12R</td><td>1.33</td>
+              <td>£5.38</td>
+            </tr>
+            <tr class="">
+              <td><strong>Current score</strong></td>
+              <td>Top 5 short — research only</td>
+              <td>115</td><td>107</td><td>39</td>
+              <td>36.4%</td><td>£-8.44</td>
+              <td>+0.05R</td><td>0.62</td>
+              <td>£10.65</td>
+            </tr>
+            <tr class="">
+              <td><strong>Pattern weighted</strong></td>
+              <td>Rank 1 long</td>
+              <td>23</td><td>20</td><td>11</td>
+              <td>55.0%</td><td>£+4.05</td>
+              <td>+0.34R</td><td>2.27</td>
+              <td>£1.66</td>
+            </tr>
+            <tr class="">
+              <td><strong>Pattern weighted</strong></td>
+              <td>Ranks 2–5 long</td>
+              <td>92</td><td>88</td><td>40</td>
+              <td>45.5%</td><td>£-1.97</td>
+              <td>+0.02R</td><td>0.87</td>
+              <td>£3.93</td>
+            </tr>
+            <tr class="">
+              <td><strong>Pattern weighted</strong></td>
+              <td>Top 5 long</td>
+              <td>115</td><td>108</td><td>51</td>
+              <td>47.2%</td><td>£+2.09</td>
+              <td>+0.08R</td><td>1.12</td>
+              <td>£4.99</td>
+            </tr>
+            <tr class="">
+              <td><strong>Pattern weighted</strong></td>
+              <td>Top 5 short — research only</td>
+              <td>115</td><td>103</td><td>37</td>
+              <td>35.9%</td><td>£-9.50</td>
+              <td>+0.04R</td><td>0.57</td>
+              <td>£12.09</td>
+            </tr>
+            <tr class="">
+              <td><strong>RSI weighted</strong></td>
+              <td>Rank 1 long</td>
+              <td>23</td><td>21</td><td>9</td>
+              <td>42.9%</td><td>£+2.81</td>
+              <td>+0.39R</td><td>1.57</td>
+              <td>£2.00</td>
+            </tr>
+            <tr class="">
+              <td><strong>RSI weighted</strong></td>
+              <td>Ranks 2–5 long</td>
+              <td>92</td><td>90</td><td>38</td>
+              <td>42.2%</td><td>£-2.56</td>
+              <td>+0.09R</td><td>0.82</td>
+              <td>£6.70</td>
+            </tr>
+            <tr class="">
+              <td><strong>RSI weighted</strong></td>
+              <td>Top 5 long</td>
+              <td>115</td><td>111</td><td>47</td>
+              <td>42.3%</td><td>£+0.25</td>
+              <td>+0.14R</td><td>1.01</td>
+              <td>£6.21</td>
+            </tr>
+            <tr class="">
+              <td><strong>RSI weighted</strong></td>
+              <td>Top 5 short — research only</td>
+              <td>115</td><td>105</td><td>34</td>
+              <td>32.4%</td><td>£-7.77</td>
+              <td>+0.00R</td><td>0.64</td>
+              <td>£12.12</td>
+            </tr>
+            <tr class="">
+              <td><strong>Trend weighted</strong></td>
+              <td>Rank 1 long</td>
+              <td>23</td><td>20</td><td>11</td>
+              <td>55.0%</td><td>£+1.47</td>
+              <td>+0.28R</td><td>1.48</td>
+              <td>£1.65</td>
+            </tr>
+            <tr class="">
+              <td><strong>Trend weighted</strong></td>
+              <td>Ranks 2–5 long</td>
+              <td>92</td><td>87</td><td>40</td>
+              <td>46.0%</td><td>£+4.22</td>
+              <td>+0.08R</td><td>1.30</td>
+              <td>£4.81</td>
+            </tr>
+            <tr class="">
+              <td><strong>Trend weighted</strong></td>
+              <td>Top 5 long</td>
+              <td>115</td><td>107</td><td>51</td>
+              <td>47.7%</td><td>£+5.69</td>
+              <td>+0.12R</td><td>1.33</td>
+              <td>£5.15</td>
+            </tr>
+            <tr class="">
+              <td><strong>Trend weighted</strong></td>
+              <td>Top 5 short — research only</td>
+              <td>115</td><td>103</td><td>37</td>
+              <td>35.9%</td><td>£-10.30</td>
+              <td>+0.01R</td><td>0.52</td>
+              <td>£10.74</td>
+            </tr>
+            <tr class="">
+              <td><strong>Volume weighted</strong></td>
+              <td>Rank 1 long</td>
+              <td>23</td><td>21</td><td>11</td>
+              <td>52.4%</td><td>£+1.73</td>
+              <td>+0.36R</td><td>1.60</td>
+              <td>£1.52</td>
+            </tr>
+            <tr class="">
+              <td><strong>Volume weighted</strong></td>
+              <td>Ranks 2–5 long</td>
+              <td>92</td><td>86</td><td>40</td>
+              <td>46.5%</td><td>£+6.13</td>
+              <td>+0.10R</td><td>1.47</td>
+              <td>£3.61</td>
+            </tr>
+            <tr class="">
+              <td><strong>Volume weighted</strong></td>
+              <td>Top 5 long</td>
+              <td>115</td><td>107</td><td>51</td>
+              <td>47.7%</td><td>£+7.85</td>
+              <td>+0.15R</td><td>1.49</td>
+              <td>£4.05</td>
+            </tr>
+            <tr class="">
+              <td><strong>Volume weighted</strong></td>
+              <td>Top 5 short — research only</td>
+              <td>115</td><td>99</td><td>36</td>
+              <td>36.4%</td><td>£-5.29</td>
+              <td>+0.04R</td><td>0.75</td>
+              <td>£10.00</td>
+            </tr>
+            <tr class="">
+              <td><strong>Trend + volume</strong></td>
+              <td>Rank 1 long</td>
+              <td>23</td><td>21</td><td>11</td>
+              <td>52.4%</td><td>£+1.91</td>
+              <td>+0.37R</td><td>1.79</td>
+              <td>£1.17</td>
+            </tr>
+            <tr class="">
+              <td><strong>Trend + volume</strong></td>
+              <td>Ranks 2–5 long</td>
+              <td>92</td><td>86</td><td>41</td>
+              <td>47.7%</td><td>£+7.13</td>
+              <td>+0.13R</td><td>1.56</td>
+              <td>£3.38</td>
+            </tr>
+            <tr class="">
+              <td><strong>Trend + volume</strong></td>
+              <td>Top 5 long</td>
+              <td>115</td><td>107</td><td>52</td>
+              <td>48.6%</td><td>£+9.04</td>
+              <td>+0.18R</td><td>1.59</td>
+              <td>£3.82</td>
+            </tr>
+            <tr class="">
+              <td><strong>Trend + volume</strong></td>
+              <td>Top 5 short — research only</td>
+              <td>115</td><td>103</td><td>38</td>
+              <td>36.9%</td><td>£-9.83</td>
+              <td>+0.02R</td><td>0.56</td>
+              <td>£11.24</td>
+            </tr></tbody></table></div>
+<h2>Long-only holdout factor evidence</h2>
 <div class="table-wrap"><table><thead><tr><th>Factor</th><th>Present n</th><th>Present avg</th><th>Absent avg</th><th>Effect</th><th>95% bootstrap interval</th><th>Confidence</th></tr></thead><tbody>
-        <tr><td>Strong pattern (base ≥ 7)</td><td>897</td>
-        <td>+0.15R</td><td>+0.03R</td>
-        <td>+0.12R</td><td>+0.05R to +0.19R</td><td>High</td></tr>
-        <tr><td>Volume ≥ 2.0× average</td><td>118</td>
-        <td>+0.16R</td><td>+0.08R</td>
-        <td>+0.07R</td><td>-0.06R to +0.22R</td><td>Low</td></tr>
-        <tr><td>Volume ≥ 1.5× average</td><td>247</td>
-        <td>+0.09R</td><td>+0.09R</td>
-        <td>+0.01R</td><td>-0.09R to +0.12R</td><td>Low</td></tr>
-        <tr><td>SMA20 trend alignment</td><td>1020</td>
-        <td>+0.09R</td><td>+0.09R</td>
-        <td>-0.01R</td><td>-0.08R to +0.07R</td><td>No positive evidence</td></tr>
-        <tr><td>Extreme RSI</td><td>281</td>
-        <td>+0.05R</td><td>+0.09R</td>
-        <td>-0.04R</td><td>-0.15R to +0.07R</td><td>No positive evidence</td></tr>
-        <tr><td>Supportive RSI</td><td>1098</td>
-        <td>+0.06R</td><td>+0.12R</td>
-        <td>-0.06R</td><td>-0.13R to +0.01R</td><td>No positive evidence</td></tr></tbody></table></div>
-<p class="note">The alternative models change only which five candidates are selected each day. Entry, stop, target, spread, commission and same-day exit rules remain identical. Daily bars cannot determine which occurred first when stop and target are both touched; those cases are scored as stops. No live screener weights are changed by this research script.</p>
+        <tr><td>Volume ≥ 2.0× average</td><td>50</td>
+        <td>+0.26R</td><td>+0.12R</td>
+        <td>+0.14R</td><td>-0.06R to +0.36R</td><td>Low</td></tr>
+        <tr><td>Strong pattern (base ≥ 7)</td><td>493</td>
+        <td>+0.17R</td><td>+0.06R</td>
+        <td>+0.11R</td><td>-0.01R to +0.23R</td><td>Low</td></tr>
+        <tr><td>Volume ≥ 1.5× average</td><td>100</td>
+        <td>+0.14R</td><td>+0.13R</td>
+        <td>+0.01R</td><td>-0.14R to +0.17R</td><td>Low</td></tr>
+        <tr><td>Supportive RSI</td><td>377</td>
+        <td>+0.12R</td><td>+0.14R</td>
+        <td>-0.02R</td><td>-0.13R to +0.09R</td><td>No positive evidence</td></tr>
+        <tr><td>Extreme RSI</td><td>53</td>
+        <td>+0.10R</td><td>+0.13R</td>
+        <td>-0.03R</td><td>-0.27R to +0.22R</td><td>No positive evidence</td></tr>
+        <tr><td>SMA20 trend alignment</td><td>543</td>
+        <td>+0.12R</td><td>+0.16R</td>
+        <td>-0.04R</td><td>-0.17R to +0.09R</td><td>No positive evidence</td></tr></tbody></table></div>
+<p class="note">Headline model results use the five highest-ranked long candidates each day. “Rank 1 long” means the highest-scoring long candidate, even when a short candidate ranks above it overall. Short signals remain in a separate research row and do not affect long-only win rate, P/L or profit factor. Entry, stop, target, spread, commission and same-day exit rules remain identical. Daily bars cannot determine which occurred first when stop and target are both touched; those cases are scored as stops.</p>
 </main></body></html>
