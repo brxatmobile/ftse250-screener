@@ -30,7 +30,7 @@ Usage:
   supplied, BACKTEST_DAYS is used and defaults to 75.
 """
 
-# FILE_VERSION: BACKTEST_RESTORED_FINITE_2026_08_01
+# FILE_VERSION: BACKTEST_HTML_NAV_2026_08_02
 
 
 import os
@@ -385,6 +385,9 @@ def render_html_report(trades, capital, risk_pct, generated_at):
 body {{ margin:0; background:var(--ink); color:var(--paper); font-family:Arial,sans-serif; }}
 .wrap {{ max-width:900px; margin:auto; padding:22px 14px 50px; }}
 a {{ color:var(--brass); }}
+.site-nav {{ display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px; }}
+.site-nav a {{ text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:8px 12px;color:var(--paper);font-size:13px; }}
+.site-nav a.active {{ border-color:var(--brass);color:var(--brass); }}
 h1 {{ margin:6px 0 4px; font-size:28px; }}
 .sub {{ color:var(--muted); font-size:13px; margin-bottom:18px; }}
 .summary {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:16px 0; }}
@@ -412,7 +415,7 @@ h1 {{ margin:6px 0 4px; font-size:28px; }}
 </style>
 </head>
 <body><main class="wrap">
-<a href="index.html">← Daily watchlist</a>
+<nav class="site-nav"><a href="index.html">Daily screener</a><a class="active" href="backtest.html">Backtest</a><a href="intraday.html">Intraday</a></nav>
 <h1>Backtest analysis</h1>
 <div class="sub">Generated {generated_at} · {period_start} to {period_end}</div>
 <section class="summary">
