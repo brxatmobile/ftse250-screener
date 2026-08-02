@@ -11,7 +11,7 @@ and reports performance separately on the final 30% holdout period.
 It writes docs/backtest-research.html. It does not modify screener.py or the live scoring.
 """
 
-# FILE_VERSION: BACKTEST_RESEARCH_SEPARATE_2026_08_02
+# FILE_VERSION: BACKTEST_RESEARCH_LONG_ONLY_RANK1_2026_08_02
 
 import argparse
 import datetime as dt
@@ -261,12 +261,20 @@ def build_candidate_history(start=None, end=None, last_n=None):
     return dict(history)
 
 
-def selected_trades(history, model_name, dates):
+def selected_trades(history, model_name, dates, direction=None, limit=5, skip_first=0):
+    """Return ranked trades for each day.
+
+    When direction is supplied, ranking is performed inside that direction. Therefore
+    direction="Long", limit=1 means the highest-ranked long candidate of each day,
+    regardless of whether a short candidate scored more highly overall.
+    """
     trades = []
     for date in dates:
         candidates = history.get(date, [])
+        if direction:
+            candidates = [t for t in candidates if t["direction"] == direction]
         ranked = sorted(candidates, key=lambda x: x["model_scores"][model_name], reverse=True)
-        trades.extend(ranked[:5])
+        trades.extend(ranked[skip_first: skip_first + limit])
     return trades
 
 
@@ -310,7 +318,10 @@ def bootstrap_difference(on_values, off_values, iterations=2000, seed=20260802):
 
 
 def factor_analysis(history, dates):
-    candidates = [t for d in dates for t in history.get(d, []) if not t["skipped"] and t["shares"] > 0]
+    candidates = [
+        t for d in dates for t in history.get(d, [])
+        if t["direction"] == "Long" and not t["skipped"] and t["shares"] > 0
+    ]
     definitions = {
         "Strong pattern (base ≥ 7)": lambda t: t["pattern_base"] >= 7,
         "Supportive RSI": lambda t: t["rsi_supportive"],
@@ -353,7 +364,7 @@ def fmt_pf(value):
     return "∞" if math.isinf(value) else f"{value:.2f}"
 
 
-def render_html(history, dates, train_dates, test_dates, model_results, factors):
+def render_html(history, dates, train_dates, test_dates, model_results, ranking_results, factors):
     baseline_test = model_results["Current score"]["test"]
     best_name = max(model_results, key=lambda n: model_results[n]["test"]["net_pnl"])
     best_test = model_results[best_name]["test"]
@@ -373,6 +384,21 @@ def render_html(history, dates, train_dates, test_dates, model_results, factors)
           <td class="{cls}">£{change:+,.2f}</td>
         </tr>""")
 
+
+    ranking_rows = []
+    for name, groups in ranking_results.items():
+        for label, stats in groups.items():
+            row_class = "neutral" if "Short" in label else ""
+            ranking_rows.append(f"""
+            <tr class="{row_class}">
+              <td><strong>{html_lib.escape(name)}</strong></td>
+              <td>{html_lib.escape(label)}</td>
+              <td>{stats['signals']}</td><td>{stats['executed']}</td><td>{stats['wins']}</td>
+              <td>{stats['win_rate']:.1f}%</td><td>£{stats['net_pnl']:+,.2f}</td>
+              <td>{stats['avg_r']:+.2f}R</td><td>{fmt_pf(stats['profit_factor'])}</td>
+              <td>£{stats['max_drawdown']:,.2f}</td>
+            </tr>""")
+
     factor_rows = []
     for f in factors:
         ci_text = "n/a" if not f["ci"] else f"{f['ci'][0]:+.2f}R to {f['ci'][1]:+.2f}R"
@@ -384,7 +410,7 @@ def render_html(history, dates, train_dates, test_dates, model_results, factors)
     if primary:
         primary_html = f"""
         <section class="callout">
-          <div class="eyebrow">Strongest measured factor in the holdout period</div>
+          <div class="eyebrow">Strongest measured factor for long candidates in the holdout period</div>
           <h2>{html_lib.escape(primary['factor'])}</h2>
           <p>Average improvement: <strong>{primary['effect']:+.2f}R per candidate</strong>. Confidence: <strong>{primary['confidence']}</strong>.</p>
           <p class="muted">Factor present: {primary['n_on']} candidates at {primary['avg_r_on']:+.2f}R average; absent: {primary['n_off']} candidates at {primary['avg_r_off']:+.2f}R average.</p>
@@ -414,11 +440,13 @@ h1{{margin:4px 0}} .muted,.sub{{color:var(--muted)}} .sub{{margin-bottom:18px;fo
 <div class="stat"><div class="label">Best holdout model</div><div class="value" style="font-size:15px">{html_lib.escape(best_name)}</div></div>
 </div>
 {primary_html}
-<h2>Current score versus fixed reweighting models</h2>
+<h2>Long-only model comparison: top five long candidates</h2>
 <div class="table-wrap"><table><thead><tr><th>Model</th><th>Full P/L</th><th>Full win</th><th>Full PF</th><th>Full DD</th><th>Research P/L</th><th>Holdout P/L</th><th>Holdout win</th><th>Holdout PF</th><th>vs current</th></tr></thead><tbody>{''.join(model_rows)}</tbody></table></div>
-<h2>Holdout factor evidence</h2>
+<h2>Rank and direction breakdown — holdout period</h2>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Selection</th><th>Signals</th><th>Executed</th><th>Wins</th><th>Win rate</th><th>P/L</th><th>Average R</th><th>PF</th><th>Drawdown</th></tr></thead><tbody>{''.join(ranking_rows)}</tbody></table></div>
+<h2>Long-only holdout factor evidence</h2>
 <div class="table-wrap"><table><thead><tr><th>Factor</th><th>Present n</th><th>Present avg</th><th>Absent avg</th><th>Effect</th><th>95% bootstrap interval</th><th>Confidence</th></tr></thead><tbody>{''.join(factor_rows)}</tbody></table></div>
-<p class="note">The alternative models change only which five candidates are selected each day. Entry, stop, target, spread, commission and same-day exit rules remain identical. Daily bars cannot determine which occurred first when stop and target are both touched; those cases are scored as stops. No live screener weights are changed by this research script.</p>
+<p class="note">Headline model results use the five highest-ranked long candidates each day. “Rank 1 long” means the highest-scoring long candidate, even when a short candidate ranks above it overall. Short signals remain in a separate research row and do not affect long-only win rate, P/L or profit factor. Entry, stop, target, spread, commission and same-day exit rules remain identical. Daily bars cannot determine which occurred first when stop and target are both touched; those cases are scored as stops.</p>
 </main></body></html>"""
 
 
@@ -448,13 +476,22 @@ def main():
     results = {}
     for model in model_names:
         results[model] = {
-            "full": summary(selected_trades(history, model, dates)),
-            "train": summary(selected_trades(history, model, train_dates)),
-            "test": summary(selected_trades(history, model, test_dates)),
+            "full": summary(selected_trades(history, model, dates, direction="Long", limit=5)),
+            "train": summary(selected_trades(history, model, train_dates, direction="Long", limit=5)),
+            "test": summary(selected_trades(history, model, test_dates, direction="Long", limit=5)),
+        }
+
+    ranking_results = {}
+    for model in model_names:
+        ranking_results[model] = {
+            "Rank 1 long": summary(selected_trades(history, model, test_dates, direction="Long", limit=1)),
+            "Ranks 2–5 long": summary(selected_trades(history, model, test_dates, direction="Long", limit=4, skip_first=1)),
+            "Top 5 long": summary(selected_trades(history, model, test_dates, direction="Long", limit=5)),
+            "Top 5 short — research only": summary(selected_trades(history, model, test_dates, direction="Short", limit=5)),
         }
 
     factors = factor_analysis(history, test_dates)
-    report = render_html(history, dates, train_dates, test_dates, results, factors)
+    report = render_html(history, dates, train_dates, test_dates, results, ranking_results, factors)
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         f.write(report)
@@ -464,9 +501,13 @@ def main():
     for model, result in results.items():
         test = result["test"]
         print(f"{model:18} P/L £{test['net_pnl']:+.2f} | win {test['win_rate']:.1f}% | PF {fmt_pf(test['profit_factor'])} | vs baseline £{test['net_pnl'] - baseline['net_pnl']:+.2f}")
+    print("\nRANK 1 LONG — HOLDOUT PERIOD")
+    for model in model_names:
+        rank1 = ranking_results[model]["Rank 1 long"]
+        print(f"{model:18} {rank1['wins']}/{rank1['executed']} winners | win {rank1['win_rate']:.1f}% | P/L £{rank1['net_pnl']:+.2f} | PF {fmt_pf(rank1['profit_factor'])}")
     if factors:
         p = factors[0]
-        print(f"\nPrimary factor: {p['factor']} | effect {p['effect']:+.2f}R | confidence {p['confidence']}")
+        print(f"\nPrimary long-only factor: {p['factor']} | effect {p['effect']:+.2f}R | confidence {p['confidence']}")
     print(f"Wrote {OUTPUT_PATH}")
 
 
