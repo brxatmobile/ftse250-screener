@@ -30,7 +30,7 @@ Usage:
   supplied, BACKTEST_DAYS is used and defaults to 75.
 """
 
-# FILE_VERSION: BACKTEST_HTML_NAV_2026_08_02
+# FILE_VERSION: BACKTEST_HTML_NAV_BLANK_ENV_FIX_2026_08_02
 
 
 import os
@@ -45,11 +45,33 @@ import yfinance as yf
 
 import screener as scr  # reuse fetch_ftse250_constituents, analyze, detect_pattern, etc.
 
-CAPITAL = float(os.environ.get("CAPITAL", "5000"))
-RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
-SPREAD_BPS = float(os.environ.get("SPREAD_BPS", "20"))
-COMMISSION_PER_TRADE = float(os.environ.get("COMMISSION_PER_TRADE", "0"))
-BACKTEST_DAYS = int(os.environ.get("BACKTEST_DAYS", "75"))
+def env_float(name, default):
+    """Read a numeric environment variable, treating blank values as unset."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return float(default)
+    try:
+        return float(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number; received {raw!r}") from exc
+
+
+def env_int(name, default):
+    """Read an integer environment variable, treating blank values as unset."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return int(default)
+    try:
+        return int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a whole number; received {raw!r}") from exc
+
+
+CAPITAL = env_float("CAPITAL", 5000)
+RISK_PCT = env_float("RISK_PCT", 1)
+SPREAD_BPS = env_float("SPREAD_BPS", 20)
+COMMISSION_PER_TRADE = env_float("COMMISSION_PER_TRADE", 0)
+BACKTEST_DAYS = env_int("BACKTEST_DAYS", 75)
 BACKTEST_OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "docs", "backtest.html")
 
 
