@@ -1,5 +1,5 @@
 """
-FTSE opening-hour day-trade assessment.
+FTSE opening-hour day-trade assessment using pattern-first daily selection.
 
 This is an add-on to the existing screener.py. It does not alter the daily
 screener or backtest. The daily screener supplies the shortlist; this script
@@ -25,7 +25,7 @@ Environment variables:
   ENTRY_BUFFER_PCT           default 0.05
 """
 
-# FILE_VERSION: INTRADAY_DAYTRADER_NO_EMAIL_2026_08_02
+# FILE_VERSION: INTRADAY_PATTERN_VOLUME_TREND_2026_08_02
 
 from __future__ import annotations
 
@@ -232,6 +232,10 @@ def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, A
         "ticker": ticker,
         "direction": direction,
         "daily_pattern": candidate.get("pattern", ""),
+        "daily_pattern_base": float(candidate.get("pattern_base", 0) or 0),
+        "daily_strong_pattern": bool(candidate.get("strong_pattern", False)),
+        "daily_trend_aligned": bool(candidate.get("trend_aligned", False)),
+        "daily_volume_ratio": float(candidate.get("vol_ratio", 1.0) or 1.0),
         "daily_score": float(candidate.get("score", 0)),
         "status": "NO TRADE",
         "recommendation": "No usable opening-hour data",
@@ -275,16 +279,39 @@ def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, A
     checks: list[str] = []
     blockers: list[str] = []
 
+    # Carry the research-backed daily evidence into the opening-hour decision.
+    daily_pattern_base = float(result.get("daily_pattern_base", 0) or 0)
+    daily_strong_pattern = bool(result.get("daily_strong_pattern", False)) or daily_pattern_base >= 7.0
+    daily_volume_ratio = float(result.get("daily_volume_ratio", 1.0) or 1.0)
+    daily_trend_aligned = bool(result.get("daily_trend_aligned", False))
+
+    if daily_strong_pattern:
+        score += 10
+        checks.append(f"Strong daily pattern ({daily_pattern_base:.1f} base)")
+    else:
+        blockers.append(f"Daily pattern base {daily_pattern_base:.1f} is below the researched 7.0 threshold")
+
+    if daily_volume_ratio >= 2.0:
+        score += 5
+        checks.append(f"Daily volume was very strong at {daily_volume_ratio:.2f}× average")
+    elif daily_volume_ratio >= 1.5:
+        score += 3
+        checks.append(f"Daily volume was elevated at {daily_volume_ratio:.2f}× average")
+
+    if daily_trend_aligned:
+        score += 3
+        checks.append("Daily direction is aligned with SMA20")
+
     aligned_previous_close = close > previous_close if long_side else close < previous_close
     if aligned_previous_close:
-        score += 20
+        score += 15
         checks.append("Direction agrees with the previous close")
     else:
         blockers.append("Opening hour contradicts the daily direction")
 
     aligned_vwap = close > vwap if long_side else close < vwap
     if aligned_vwap:
-        score += 20
+        score += 15
         checks.append("Price is on the correct side of VWAP")
     else:
         blockers.append("Price is on the wrong side of VWAP")
@@ -374,14 +401,15 @@ def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, A
         or text.startswith("Price is on the wrong side")
         or text.startswith("Opening gap")
         or text.startswith("The calculated")
+        or text.startswith("Daily pattern base")
     ]
 
     if not hard_blockers and score >= 80:
         status = "STRONG SETUP"
-        recommendation = f"Consider only on a break of the opening range {'high' if long_side else 'low'}; do not chase above/below the trigger."
+        recommendation = f"Strong pattern-led setup. Consider only after a clean break and hold beyond the opening-range {'high' if long_side else 'low'}; do not chase the trigger."
     elif not hard_blockers and score >= MIN_INTRADAY_SCORE:
         status = "WATCH"
-        recommendation = f"Borderline day-trade setup. Require a clean break and hold beyond the trigger before considering entry."
+        recommendation = f"Pattern qualifies but confirmation is incomplete. Require a clean opening-range break, acceptable live spread and continued volume before considering entry."
     else:
         status = "NO TRADE"
         recommendation = "Opening-hour evidence is not strong enough for the proposed day-trade plan."
@@ -470,13 +498,12 @@ def build_live_html(results: list[dict[str, Any]], generated_at: dt.datetime) ->
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FTSE opening-hour day-trade review</title>
 <style>
-:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}.wrap{max-width:900px;margin:auto;padding:22px 14px 56px}a{color:$BRASS}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid $HAIRLINE;padding-bottom:16px}h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:$SALMON;font-size:12px;text-transform:uppercase;letter-spacing:.09em}.time,.pattern,.name,.footer{color:$MUTED;font-size:12px}.site-nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}.site-nav a{text-decoration:none;border:1px solid $HAIRLINE;border-radius:999px;padding:8px 12px;color:$PAPER;font-size:13px}.site-nav a.active{border-color:$BRASS;color:$BRASS}.summary,.pick{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:15px;margin:14px 0}.summary strong{color:$BRASS}.expiry{color:$SALMON;font-weight:700}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:$INK;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}.metrics span{display:block;color:$MUTED;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:$BRASS;font-size:13px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:$MUTED;font-size:12px;line-height:1.5}.expired{display:none;background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:22px;margin-top:18px}.footer{line-height:1.6;border-top:1px solid $HAIRLINE;padding-top:14px;margin-top:20px}@media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}.wrap{max-width:900px;margin:auto;padding:22px 14px 56px}a{color:$BRASS}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid $HAIRLINE;padding-bottom:16px}h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:$SALMON;font-size:12px;text-transform:uppercase;letter-spacing:.09em}.time,.pattern,.name,.footer{color:$MUTED;font-size:12px}.summary,.pick{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:15px;margin:14px 0}.summary strong{color:$BRASS}.expiry{color:$SALMON;font-weight:700}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:$INK;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}.metrics span{display:block;color:$MUTED;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:$BRASS;font-size:13px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:$MUTED;font-size:12px;line-height:1.5}.expired{display:none;background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:22px;margin-top:18px}.footer{line-height:1.6;border-top:1px solid $HAIRLINE;padding-top:14px;margin-top:20px}@media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
 </style></head><body><main class="wrap">
-<nav class="site-nav"><a href="index.html">Daily screener</a><a href="backtest.html">Backtest</a><a class="active" href="intraday.html">Intraday</a></nav>
 <div class="header"><div><div class="kicker">FTSE · opening-hour decision support</div><h1>09:00 day-trade review</h1></div><div class="time">$DATE<br>$TIME</div></div>
-<div id="live-content"><div class="summary"><strong>$ACTIONABLE of $TOTAL candidates remain worth reviewing.</strong> These are conditional setups, not market orders. <span class="expiry">All recommendations expire automatically at 10:00 London time.</span></div>$CARDS</div>
+<div id="live-content"><div class="summary"><strong>$ACTIONABLE of $TOTAL candidates remain worth reviewing.</strong> These are conditional setups, not market orders. <span class="expiry">All recommendations expire automatically at 10:00 London time.</span> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>$CARDS</div>
 <div id="expired-content" class="expired"><h2>Today’s recommendations have expired</h2><p>The 10:00 London cutoff has passed. Do not use the earlier opening-hour levels as current recommendations.</p><p><a href="index.html">Return to the daily watchlist</a></p></div>
-<p class="footer">Method: daily-screen candidates are reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. Entry levels are conditional opening-range triggers. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
+<p class="footer">Method: candidates must first have a strong daily candlestick pattern (base at least 7), with daily volume and SMA20 alignment used as secondary evidence. They are then reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. Entry levels are conditional opening-range triggers. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
 </main><script>
 (function(){const expiry=new Date('$EXPIRY');const live=document.getElementById('live-content');const expired=document.getElementById('expired-content');function enforce(){if(new Date()>=expiry){live.style.display='none';expired.style.display='block';}}enforce();setInterval(enforce,30000);})();
 </script></body></html>""")
@@ -491,7 +518,7 @@ def build_live_html(results: list[dict[str, Any]], generated_at: dt.datetime) ->
 def build_expired_html(now: dt.datetime) -> str:
     from string import Template
 
-    template = Template("""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE intraday recommendations expired</title><style>:root{color-scheme:dark}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}main{max-width:720px;margin:auto;padding:44px 18px}section{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:24px}h1{margin-top:0}p{line-height:1.6;color:$MUTED}a{color:$BRASS}.site-nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}.site-nav a{text-decoration:none;border:1px solid $HAIRLINE;border-radius:999px;padding:8px 12px;color:$PAPER;font-size:13px}.site-nav a.active{border-color:$BRASS;color:$BRASS}.time{font-size:12px;color:$SALMON}</style></head><body><main><nav class="site-nav"><a href="index.html">Daily screener</a><a href="backtest.html">Backtest</a><a class="active" href="intraday.html">Intraday</a></nav><section><div class="time">$STAMP</div><h1>Today’s recommendations have expired</h1><p>The 10:00 London cutoff has passed. The opening-hour setups have been removed because they are no longer intended for execution.</p><p>The page will be rebuilt after tomorrow’s completed opening hour.</p></section></main></body></html>""")
+    template = Template("""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE intraday recommendations expired</title><style>:root{color-scheme:dark}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}main{max-width:720px;margin:auto;padding:44px 18px}section{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:24px}h1{margin-top:0}p{line-height:1.6;color:$MUTED}a{color:$BRASS}.time{font-size:12px;color:$SALMON}</style></head><body><main><section><div class="time">$STAMP</div><h1>Today’s recommendations have expired</h1><p>The 10:00 London cutoff has passed. The opening-hour setups have been removed because they are no longer intended for execution.</p><p>The page will be rebuilt after tomorrow’s completed opening hour.</p><p><a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></p></section></main></body></html>""")
     return template.substitute(
         INK=INK, PAPER=PAPER, PANEL=PANEL, HAIRLINE=HAIRLINE, MUTED=MUTED,
         BRASS=BRASS, SALMON=SALMON, STAMP=now.strftime("%a %d %b %Y · %H:%M %Z"),
