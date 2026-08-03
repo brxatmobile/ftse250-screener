@@ -12,11 +12,10 @@ on:
           - expire
         default: analyse
   schedule:
-    # GitHub schedules use UTC. Both seasonal possibilities are included.
-    # The Python script checks Europe/London time and exits on the duplicate run.
-    - cron: "5 8 * * 1-5"   # 09:05 BST
-    - cron: "5 9 * * 1-5"   # 09:05 GMT or 10:05 BST
-    - cron: "5 10 * * 1-5"  # 10:05 GMT
+    # Run once after the completed 08:00-09:00 London opening hour.
+    # The timezone setting keeps this at 09:05 through GMT and BST.
+    - cron: "5 9 * * 1-5"
+      timezone: "Europe/London"
 
 permissions:
   contents: write
