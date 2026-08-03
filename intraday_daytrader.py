@@ -1,3 +1,5 @@
+# FILE_VERSION: INTRADAY_READS_SAVED_DAILY_SHORTLIST_2026_08_03
+# FILE_VERSION: INTRADAY_LIVE_PRICE_RECALC_2026_08_03
 """
 FTSE opening-hour day-trade assessment using pattern-first daily selection.
 
@@ -142,7 +144,7 @@ def get_daily_candidates() -> list[dict[str, Any]]:
 
     page = DAILY_INDEX_PATH.read_text(encoding="utf-8")
     match = re.search(
-        r'<script[^>]+id=["\\\']daily-shortlist-data["\\\'][^>]*>(.*?)</script>',
+        r'<script[^>]+id=["\']daily-shortlist-data["\'][^>]*>(.*?)</script>',
         page,
         flags=re.IGNORECASE | re.DOTALL,
     )
