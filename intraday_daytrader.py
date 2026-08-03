@@ -23,6 +23,7 @@ Environment variables:
   MIN_OPENING_VOLUME_RATIO   default 0.60
   MAX_VWAP_DISTANCE_PCT      default 1.25
   ENTRY_BUFFER_PCT           default 0.05
+  MAX_ENTRY_EXTENSION_R      default 0.25
 """
 
 # FILE_VERSION: INTRADAY_PATTERN_VOLUME_TREND_2026_08_02
@@ -57,6 +58,7 @@ MIN_INTRADAY_SCORE = float(os.environ.get("MIN_INTRADAY_SCORE", "65"))
 MIN_OPENING_VOLUME_RATIO = float(os.environ.get("MIN_OPENING_VOLUME_RATIO", "0.60"))
 MAX_VWAP_DISTANCE_PCT = float(os.environ.get("MAX_VWAP_DISTANCE_PCT", "1.25"))
 ENTRY_BUFFER_PCT = float(os.environ.get("ENTRY_BUFFER_PCT", "0.05"))
+MAX_ENTRY_EXTENSION_R = float(os.environ.get("MAX_ENTRY_EXTENSION_R", "0.25"))
 
 OUTPUT_PATH = Path(__file__).resolve().parent / "docs" / "intraday.html"
 DAILY_INDEX_PATH = Path(__file__).resolve().parent / "docs" / "index.html"
@@ -369,24 +371,43 @@ def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, A
     else:
         blockers.append(pattern_text + " opposes the daily direction")
 
-    after_nine = today_frame[today_frame.index.time >= dt.time(9, 0)]
-    reference_entry = float(after_nine.iloc[0]["Open"]) if not after_nine.empty else close
+    # Use the latest *completed* five-minute candle available when the assessment
+    # runs. Yahoo timestamps each bar at its start, so a bar is complete only once
+    # its timestamp plus five minutes is no later than the current London time.
+    completed = today_frame[(today_frame.index + pd.Timedelta(minutes=5)) <= pd.Timestamp(now)]
+    latest_completed = completed.iloc[-1] if not completed.empty else opening.iloc[-1]
+    latest_price = float(latest_completed["Close"])
+    latest_price_time = latest_completed.name
     daily_stop = float(candidate.get("stop", low if long_side else high))
 
     if long_side:
         trigger = high * (1 + ENTRY_BUFFER_PCT / 100)
-        stop = max(low, daily_stop) if daily_stop < reference_entry else low
-        risk = trigger - stop
-        target = trigger + TARGET_R * risk
-        invalidated = reference_entry <= stop
+        stop = max(low, daily_stop) if daily_stop < latest_price else low
+        trigger_risk = trigger - stop
+        maximum_purchase = trigger + MAX_ENTRY_EXTENSION_R * trigger_risk
+        trigger_passed = latest_price >= trigger
+        chased = latest_price > maximum_purchase
+        purchase_price = latest_price if trigger_passed else trigger
+        risk = purchase_price - stop
+        target = purchase_price + TARGET_R * risk
+        invalidated = latest_price <= stop
     else:
         trigger = low * (1 - ENTRY_BUFFER_PCT / 100)
-        stop = min(high, daily_stop) if daily_stop > reference_entry else high
-        risk = stop - trigger
-        target = trigger - TARGET_R * risk
-        invalidated = reference_entry >= stop
+        stop = min(high, daily_stop) if daily_stop > latest_price else high
+        trigger_risk = stop - trigger
+        maximum_purchase = trigger - MAX_ENTRY_EXTENSION_R * trigger_risk
+        trigger_passed = latest_price <= trigger
+        chased = latest_price < maximum_purchase
+        purchase_price = latest_price if trigger_passed else trigger
+        risk = stop - purchase_price
+        target = purchase_price - TARGET_R * risk
+        invalidated = latest_price >= stop
 
-    if invalidated or risk <= 0 or not all(finite_number(v) for v in [trigger, stop, target]):
+    if not trigger_passed:
+        blockers.append("The opening-range entry trigger has not yet been passed")
+    if chased:
+        blockers.append("DO NOT CHASE — price has moved beyond the acceptable entry range")
+    if invalidated or risk <= 0 or not all(finite_number(v) for v in [trigger, purchase_price, stop, target]):
         blockers.append("The calculated entry/stop structure is invalid")
 
     risk_budget = CAPITAL * RISK_PCT / 100
@@ -394,11 +415,11 @@ def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, A
     position_value = 0.0
     planned_risk = 0.0
     if risk > 0:
-        trigger_gbp = scr.gbx_to_gbp(trigger)
+        purchase_gbp = scr.gbx_to_gbp(purchase_price)
         risk_gbp = scr.gbx_to_gbp(risk)
-        if trigger_gbp > 0 and risk_gbp > 0:
-            shares = max(0, min(math.floor(risk_budget / risk_gbp), math.floor(CAPITAL / trigger_gbp)))
-            position_value = shares * trigger_gbp
+        if purchase_gbp > 0 and risk_gbp > 0:
+            shares = max(0, min(math.floor(risk_budget / risk_gbp), math.floor(CAPITAL / purchase_gbp)))
+            position_value = shares * purchase_gbp
             planned_risk = shares * risk_gbp
     if shares <= 0:
         blockers.append("Capital/risk settings do not support one whole share")
@@ -409,6 +430,7 @@ def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, A
         or text.startswith("Price is on the wrong side")
         or text.startswith("Opening gap")
         or text.startswith("The calculated")
+        or text.startswith("DO NOT CHASE")
         or text.startswith("Daily pattern base")
     ]
 
@@ -444,7 +466,12 @@ def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, A
         "volume_ratio": volume_ratio,
         "opening_pattern": pattern_text,
         "entry_trigger_gbx": trigger,
-        "purchase_price_gbx": trigger if long_side else None,
+        "latest_price_gbx": latest_price,
+        "latest_price_time": latest_price_time.strftime("%H:%M"),
+        "purchase_price_gbx": purchase_price,
+        "maximum_purchase_gbx": maximum_purchase,
+        "trigger_passed": trigger_passed,
+        "chased": chased,
         "risk_per_share_gbx": risk,
         "reward_per_share_gbx": TARGET_R * risk,
         "risk_reward_text": f"1:{TARGET_R:g}",
@@ -489,12 +516,15 @@ def render_result(item: dict[str, Any]) -> str:
         <div><span>Close in range</span><strong>{item.get('close_location_pct', 0):.0f}%</strong></div>
         <div><span>Relative volume</span><strong>{volume_text}</strong></div>
         <div><span>Opening pattern</span><strong>{html_lib.escape(item.get('opening_pattern', '—'))}</strong></div>
-        <div><span>{"Planned purchase price" if item.get('direction') == 'Long' else "Short-entry trigger"}</span><strong>{money_gbx(item.get('entry_trigger_gbx'))}</strong></div>
-        <div><span>Stop / 2R target</span><strong>{money_gbx(item.get('stop_gbx'))} / {money_gbx(item.get('target_gbx'))}</strong></div>
+        <div><span>Latest completed price</span><strong>{money_gbx(item.get('latest_price_gbx'))} at {html_lib.escape(str(item.get('latest_price_time', '—')))}</strong></div>
+        <div><span>Opening-range trigger</span><strong>{money_gbx(item.get('entry_trigger_gbx'))}</strong></div>
+        <div><span>{"Planned purchase price" if item.get('direction') == 'Long' else "Planned short price"}</span><strong>{money_gbx(item.get('purchase_price_gbx'))}</strong></div>
+        <div><span>{"Maximum purchase price" if item.get('direction') == 'Long' else "Minimum short price"}</span><strong>{money_gbx(item.get('maximum_purchase_gbx'))}</strong></div>
+        <div><span>Recalculated stop / 2R target</span><strong>{money_gbx(item.get('stop_gbx'))} / {money_gbx(item.get('target_gbx'))}</strong></div>
         <div><span>Risk / reward per share</span><strong>{money_gbx(item.get('risk_per_share_gbx'))} / {money_gbx(item.get('reward_per_share_gbx'))} ({html_lib.escape(item.get('risk_reward_text', '1:2'))})</strong></div>
         <div><span>Indicative size</span><strong>{item.get('shares', 0)} shares</strong></div>
         <div><span>Value / planned risk</span><strong>£{item.get('position_value_gbp', 0):.2f} / £{item.get('planned_risk_gbp', 0):.2f}</strong></div>
-        <div><span>Fill-price rule</span><strong>Use the planned price or recalculate the target from the actual fill</strong></div>
+        <div><span>Fill-price rule</span><strong>Do not buy above the maximum price; if the fill differs, recalculate size and 2R target from the actual fill</strong></div>
       </div>
       <details><summary>Assessment details</summary>
         <div class="detail-grid"><div><h3>Positive checks</h3><ul>{checks or '<li>None</li>'}</ul></div><div><h3>Warnings</h3><ul>{blockers or '<li>None</li>'}</ul></div></div>
@@ -518,7 +548,7 @@ def build_live_html(results: list[dict[str, Any]], generated_at: dt.datetime) ->
 <div class="header"><div><div class="kicker">FTSE · opening-hour decision support</div><h1>09:00 day-trade review</h1></div><div class="time">$DATE<br>$TIME</div></div>
 <div id="expired-content" class="expired"><h2>Past the 10:00 cutoff</h2><p>The assessment below is retained for review, but it should not be followed after 10:00 London time. Opening-hour triggers, stops and targets may no longer be valid.</p></div>
 <div id="live-content"><div class="summary"><strong>$ACTIONABLE of $TOTAL candidates remain worth reviewing.</strong> These are conditional setups, not market orders. <span class="expiry">Only follow this assessment before 10:00 London time.</span> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>$CARDS</div>
-<p class="footer">Method: candidates must first have a strong daily candlestick pattern (base at least 7), with daily volume and SMA20 alignment used as secondary evidence. They are then reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. For long setups, the planned purchase price is the opening-range trigger used to calculate the displayed stop and 2R target. If the actual fill differs, recalculate the target from the actual fill before trading. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
+<p class="footer">Method: candidates must first have a strong daily candlestick pattern (base at least 7), with daily volume and SMA20 alignment used as secondary evidence. They are then reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. For long setups, the latest completed five-minute price is used once the opening-range trigger has been passed; otherwise the trigger remains the planned entry. The structural stop is retained, while risk per share, position size and the 2R target are recalculated from that planned purchase price. Do not buy above the displayed maximum purchase price. If the actual fill differs, recalculate size and target before trading. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
 </main><script>
 (function(){const expiry=new Date('$EXPIRY');const expired=document.getElementById('expired-content');function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){if(!el.dataset.original){el.dataset.original=el.textContent;}el.textContent='PAST 10:00 — Do not follow this recommendation now. Original assessment: '+el.dataset.original;});}}enforce();setInterval(enforce,30000);})();
 </script></body></html>""")
