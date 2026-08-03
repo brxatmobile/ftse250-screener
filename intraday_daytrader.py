@@ -59,6 +59,11 @@ MAX_VWAP_DISTANCE_PCT = float(os.environ.get("MAX_VWAP_DISTANCE_PCT", "1.25"))
 ENTRY_BUFFER_PCT = float(os.environ.get("ENTRY_BUFFER_PCT", "0.05"))
 
 OUTPUT_PATH = Path(__file__).resolve().parent / "docs" / "intraday.html"
+DAILY_INDEX_PATH = Path(__file__).resolve().parent / "docs" / "index.html"
+
+# Safety guard: the intraday process must never publish over the daily screener.
+if OUTPUT_PATH.resolve() == DAILY_INDEX_PATH.resolve():
+    raise RuntimeError("Intraday output path must not be docs/index.html")
 
 INK = "#12161F"
 PANEL = "#1B2129"
@@ -439,6 +444,10 @@ def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, A
         "volume_ratio": volume_ratio,
         "opening_pattern": pattern_text,
         "entry_trigger_gbx": trigger,
+        "purchase_price_gbx": trigger if long_side else None,
+        "risk_per_share_gbx": risk,
+        "reward_per_share_gbx": TARGET_R * risk,
+        "risk_reward_text": f"1:{TARGET_R:g}",
         "stop_gbx": stop,
         "target_gbx": target,
         "shares": shares,
@@ -480,10 +489,12 @@ def render_result(item: dict[str, Any]) -> str:
         <div><span>Close in range</span><strong>{item.get('close_location_pct', 0):.0f}%</strong></div>
         <div><span>Relative volume</span><strong>{volume_text}</strong></div>
         <div><span>Opening pattern</span><strong>{html_lib.escape(item.get('opening_pattern', '—'))}</strong></div>
-        <div><span>Entry trigger</span><strong>{money_gbx(item.get('entry_trigger_gbx'))}</strong></div>
-        <div><span>Stop / target</span><strong>{money_gbx(item.get('stop_gbx'))} / {money_gbx(item.get('target_gbx'))}</strong></div>
+        <div><span>{"Planned purchase price" if item.get('direction') == 'Long' else "Short-entry trigger"}</span><strong>{money_gbx(item.get('entry_trigger_gbx'))}</strong></div>
+        <div><span>Stop / 2R target</span><strong>{money_gbx(item.get('stop_gbx'))} / {money_gbx(item.get('target_gbx'))}</strong></div>
+        <div><span>Risk / reward per share</span><strong>{money_gbx(item.get('risk_per_share_gbx'))} / {money_gbx(item.get('reward_per_share_gbx'))} ({html_lib.escape(item.get('risk_reward_text', '1:2'))})</strong></div>
         <div><span>Indicative size</span><strong>{item.get('shares', 0)} shares</strong></div>
         <div><span>Value / planned risk</span><strong>£{item.get('position_value_gbp', 0):.2f} / £{item.get('planned_risk_gbp', 0):.2f}</strong></div>
+        <div><span>Fill-price rule</span><strong>Use the planned price or recalculate the target from the actual fill</strong></div>
       </div>
       <details><summary>Assessment details</summary>
         <div class="detail-grid"><div><h3>Positive checks</h3><ul>{checks or '<li>None</li>'}</ul></div><div><h3>Warnings</h3><ul>{blockers or '<li>None</li>'}</ul></div></div>
@@ -507,7 +518,7 @@ def build_live_html(results: list[dict[str, Any]], generated_at: dt.datetime) ->
 <div class="header"><div><div class="kicker">FTSE · opening-hour decision support</div><h1>09:00 day-trade review</h1></div><div class="time">$DATE<br>$TIME</div></div>
 <div id="expired-content" class="expired"><h2>Past the 10:00 cutoff</h2><p>The assessment below is retained for review, but it should not be followed after 10:00 London time. Opening-hour triggers, stops and targets may no longer be valid.</p></div>
 <div id="live-content"><div class="summary"><strong>$ACTIONABLE of $TOTAL candidates remain worth reviewing.</strong> These are conditional setups, not market orders. <span class="expiry">Only follow this assessment before 10:00 London time.</span> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>$CARDS</div>
-<p class="footer">Method: candidates must first have a strong daily candlestick pattern (base at least 7), with daily volume and SMA20 alignment used as secondary evidence. They are then reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. Entry levels are conditional opening-range triggers. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
+<p class="footer">Method: candidates must first have a strong daily candlestick pattern (base at least 7), with daily volume and SMA20 alignment used as secondary evidence. They are then reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. For long setups, the planned purchase price is the opening-range trigger used to calculate the displayed stop and 2R target. If the actual fill differs, recalculate the target from the actual fill before trading. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
 </main><script>
 (function(){const expiry=new Date('$EXPIRY');const expired=document.getElementById('expired-content');function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){if(!el.dataset.original){el.dataset.original=el.textContent;}el.textContent='PAST 10:00 — Do not follow this recommendation now. Original assessment: '+el.dataset.original;});}}enforce();setInterval(enforce,30000);})();
 </script></body></html>""")
