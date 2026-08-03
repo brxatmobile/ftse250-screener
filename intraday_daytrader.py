@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
+import re
 import html as html_lib
 import math
 import os
@@ -44,7 +46,6 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-import screener as scr
 
 LONDON = ZoneInfo("Europe/London")
 UTC = dt.timezone.utc
@@ -131,47 +132,78 @@ def auto_mode(now: dt.datetime) -> str:
 
 
 def get_daily_candidates() -> list[dict[str, Any]]:
-    print("Getting the daily shortlist through the existing screener.py...")
-    constituents = scr.fetch_ftse250_constituents()
-    epics = list(constituents)
-    tickers = [scr.epic_to_yahoo(epic) for epic in epics]
-    ticker_to_epic = dict(zip(tickers, epics))
+    """Read the exact shortlist already published by the daily screener."""
+    print(f"Reading saved daily shortlist from {DAILY_INDEX_PATH}...")
+    if not DAILY_INDEX_PATH.exists():
+        raise RuntimeError(
+            "docs/index.html is missing. The daily screener must run successfully "
+            "before the intraday assessment."
+        )
 
-    data = yf.download(
-        tickers,
-        period="3mo",
-        interval="1d",
-        group_by="ticker",
-        threads=True,
-        progress=False,
-        auto_adjust=False,
+    page = DAILY_INDEX_PATH.read_text(encoding="utf-8")
+    match = re.search(
+        r'<script[^>]+id=["\\\']daily-shortlist-data["\\\'][^>]*>(.*?)</script>',
+        page,
+        flags=re.IGNORECASE | re.DOTALL,
     )
+    if not match:
+        raise RuntimeError(
+            "The daily page does not contain saved shortlist data. Replace "
+            "screener.py with the embedded-shortlist version and run the daily "
+            "screener once before running intraday."
+        )
 
-    ranked: list[dict[str, Any]] = []
-    for ticker in tickers:
-        try:
-            frame = data[ticker] if isinstance(data.columns, pd.MultiIndex) else data
-        except Exception:
-            continue
-        if frame is None or frame.empty:
-            continue
-        frame = frame.dropna(subset=["Open", "High", "Low", "Close"])
-        if frame.empty:
-            continue
-        epic = ticker_to_epic[ticker]
-        try:
-            result = scr.analyze(epic, constituents[epic], frame)
-        except Exception as exc:
-            print(f"Skipping {epic}: daily analysis failed: {exc}")
-            continue
-        if result:
-            result["yahoo_ticker"] = ticker
-            ranked.append(result)
+    try:
+        payload = json.loads(match.group(1).replace("<\\/", "</"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Saved daily shortlist is invalid JSON: {exc}") from exc
 
-    ranked.sort(key=lambda row: float(row.get("score", 0)), reverse=True)
-    for daily_rank, row in enumerate(ranked, start=1):
-        row["daily_rank"] = daily_rank
-    return ranked[:TOP_N]
+    generated_raw = payload.get("generated_at_utc")
+    if not generated_raw:
+        raise RuntimeError("Saved daily shortlist has no generation timestamp.")
+    try:
+        generated = dt.datetime.fromisoformat(str(generated_raw).replace("Z", "+00:00"))
+        if generated.tzinfo is None:
+            generated = generated.replace(tzinfo=UTC)
+        generated_london = generated.astimezone(LONDON)
+    except ValueError as exc:
+        raise RuntimeError("Saved daily shortlist timestamp is invalid.") from exc
+
+    now = london_now()
+    if generated_london.date() != now.date():
+        raise RuntimeError(
+            "The saved shortlist is not from today: "
+            f"generated {generated_london:%Y-%m-%d %H:%M %Z}, "
+            f"current date {now:%Y-%m-%d}. The daily screener must run first."
+        )
+
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise RuntimeError("The saved daily shortlist contains no candidates.")
+
+    cleaned: list[dict[str, Any]] = []
+    for rank, candidate in enumerate(candidates[:TOP_N], start=1):
+        if not isinstance(candidate, dict):
+            continue
+        item = dict(candidate)
+        item["daily_rank"] = int(item.get("daily_rank") or rank)
+        ticker = str(item.get("yahoo_ticker") or "").strip()
+        if not ticker:
+            epic = str(item.get("epic") or "").strip().rstrip(".")
+            ticker = f"{epic}.L" if epic else ""
+        if not ticker:
+            continue
+        item["yahoo_ticker"] = ticker
+        cleaned.append(item)
+
+    if not cleaned:
+        raise RuntimeError("No usable candidates were found in the saved shortlist.")
+
+    print(
+        f"Loaded {len(cleaned)} saved candidate(s) generated "
+        f"{generated_london:%H:%M %Z}; the daily screener was not rerun."
+    )
+    return cleaned
 
 
 def get_intraday_history(ticker: str) -> pd.DataFrame:
