@@ -601,10 +601,14 @@ def render_html(results, capital, risk_pct, generated_at):
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:0; padding:0; }}
 .wrap {{ max-width:760px; margin:0 auto; padding:32px 20px 60px; box-sizing:border-box; }}
+.site-nav {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }}
+.site-nav a {{ text-decoration:none; border:1px solid {HAIRLINE}; border-radius:999px; padding:8px 12px; color:{PAPER}; font-size:13px; }}
+.site-nav a.active {{ border-color:{BRASS}; color:{BRASS}; }}
 </style>
 </head>
 <body>
 <div class="wrap">
+  <nav class="site-nav"><a class="active" href="index.html">Daily screener</a><a href="intraday.html">Intraday</a><a href="backtest.html">Backtest</a><a href="backtest-research.html">Research</a></nav>
   <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid {HAIRLINE};padding-bottom:18px;margin-bottom:24px;flex-wrap:wrap;gap:8px;">
     <div>
       <div style="font-size:11px;letter-spacing:.12em;color:{SALMON};text-transform:uppercase;margin-bottom:4px;">FTSE 250 &middot; 09:30 review</div>
