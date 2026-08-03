@@ -2,13 +2,11 @@ name: Daily FTSE 250 screen
 
 on:
   schedule:
-    # 07:00 UTC on weekdays = 08:00 in the UK during BST (summer) or 07:00 GMT
-    # (winter) — always comfortably before a 09:30 review.
     - cron: "0 7 * * 1-5"
-  workflow_dispatch: {}   # lets you trigger a run manually from the Actions tab
+  workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -22,6 +20,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - uses: actions/checkout@v5
 
@@ -37,6 +36,21 @@ jobs:
           CAPITAL: ${{ vars.CAPITAL }}
           RISK_PCT: ${{ vars.RISK_PCT }}
         run: python screener.py
+
+      - name: Verify generated page
+        run: |
+          test -s docs/index.html
+          grep -q 'id="daily-shortlist-data"' docs/index.html
+          grep -q 'href="intraday.html"' docs/index.html
+          grep -q 'href="backtest.html"' docs/index.html
+
+      - name: Commit generated daily page
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git commit -m "Update daily FTSE screener" || echo "No daily page changes"
+          git push
 
       - name: Upload page artifact
         uses: actions/upload-pages-artifact@v3
