@@ -4,59 +4,65 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Build or expire the intraday report"
+        description: "Build or retain the intraday report"
         required: true
         type: choice
         options:
           - analyse
           - expire
         default: analyse
+
   schedule:
-    # Run once after the completed 08:00-09:00 London opening hour.
-    # The timezone setting keeps this at 09:05 through GMT and BST.
+    # Both UTC times are included to cover GMT and BST.
+    # The London-time check allows only the 09:05 run to continue.
+    - cron: "5 8 * * 1-5"
     - cron: "5 9 * * 1-5"
-      timezone: "Europe/London"
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
-  group: ftse-intraday-report
+  group: "pages"
   cancel-in-progress: false
 
 jobs:
   update-intraday-page:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Check London run time
+        if: github.event_name == 'schedule'
+        run: |
+          london_time=$(TZ=Europe/London date +%H:%M)
+          echo "Current London time: $london_time"
+
+          if [ "$london_time" != "09:05" ]; then
+            echo "Seasonal duplicate run. Stopping successfully."
+            exit 0
+          fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          else
-            pip install pandas numpy requests yfinance
-          fi
+        run: pip install -r requirements.txt
 
-      - name: Record daily screener checksum
+      - name: Record daily page checksum
         run: |
-          if [ -f docs/index.html ]; then
-            sha256sum docs/index.html > /tmp/daily-index-before.sha256
-          else
-            echo "MISSING docs/index.html" > /tmp/daily-index-before.sha256
-          fi
+          sha256sum docs/index.html > /tmp/index-before.sha256
 
-      - name: Build or expire intraday report
+      - name: Build intraday report
         env:
           CAPITAL: ${{ vars.CAPITAL }}
           RISK_PCT: ${{ vars.RISK_PCT }}
@@ -67,38 +73,42 @@ jobs:
           MIN_OPENING_VOLUME_RATIO: ${{ vars.MIN_OPENING_VOLUME_RATIO }}
           MAX_VWAP_DISTANCE_PCT: ${{ vars.MAX_VWAP_DISTANCE_PCT }}
           ENTRY_BUFFER_PCT: ${{ vars.ENTRY_BUFFER_PCT }}
+          MAX_ENTRY_EXTENSION_R: ${{ vars.MAX_ENTRY_EXTENSION_R }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python intraday_daytrader.py --mode "${{ inputs.mode }}" --force
+            python intraday_daytrader.py \
+              --mode "${{ inputs.mode }}" \
+              --force
           else
             python intraday_daytrader.py --mode auto
           fi
 
-      - name: Protect daily screener page
+      - name: Verify pages
         run: |
-          test -f docs/intraday.html
-          if [ -f docs/index.html ]; then
-            sha256sum --check /tmp/daily-index-before.sha256
-          else
-            echo "ERROR: docs/index.html disappeared during the intraday run"
-            exit 1
-          fi
-          if ! git diff --quiet -- docs/index.html; then
-            echo "ERROR: intraday workflow attempted to alter docs/index.html"
-            git diff -- docs/index.html
-            git checkout -- docs/index.html
-            exit 1
-          fi
+          test -s docs/intraday.html
+          sha256sum --check /tmp/index-before.sha256
 
-      - name: Publish intraday page only
+          grep -q 'Past the 10:00 cutoff' docs/intraday.html
+          grep -q 'PAST 10:00' docs/intraday.html
+          grep -q 'id="live-content"' docs/intraday.html
+
+      - name: Commit intraday page
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add -- docs/intraday.html
-          if git diff --cached --name-only | grep -vx "docs/intraday.html"; then
-            echo "ERROR: files other than docs/intraday.html were staged"
-            git reset
-            exit 1
-          fi
-          git commit -m "Update FTSE intraday day-trade report" || echo "No report changes"
+          git commit -m "Update FTSE intraday report" || echo "No intraday changes"
           git push
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload complete website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
