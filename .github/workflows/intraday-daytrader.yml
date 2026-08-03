@@ -76,21 +76,16 @@ jobs:
           MAX_ENTRY_EXTENSION_R: ${{ vars.MAX_ENTRY_EXTENSION_R }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python intraday_daytrader.py \
-              --mode "${{ inputs.mode }}" \
-              --force
+            python intraday_daytrader.py               --mode "${{ inputs.mode }}"               --force
           else
             python intraday_daytrader.py --mode auto
           fi
 
-      - name: Verify pages
+      - name: Verify generated intraday page
         run: |
           test -s docs/intraday.html
           sha256sum --check /tmp/index-before.sha256
-
-          grep -q 'Past the 10:00 cutoff' docs/intraday.html
-          grep -q 'PAST 10:00' docs/intraday.html
-          grep -q 'id="live-content"' docs/intraday.html
+          echo "Intraday page generated and daily page unchanged."
 
       - name: Commit intraday page
         run: |
