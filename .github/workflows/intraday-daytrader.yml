@@ -48,6 +48,14 @@ jobs:
             pip install pandas numpy requests yfinance
           fi
 
+      - name: Record daily screener checksum
+        run: |
+          if [ -f docs/index.html ]; then
+            sha256sum docs/index.html > /tmp/daily-index-before.sha256
+          else
+            echo "MISSING docs/index.html" > /tmp/daily-index-before.sha256
+          fi
+
       - name: Build or expire intraday report
         env:
           CAPITAL: ${{ vars.CAPITAL }}
@@ -66,10 +74,31 @@ jobs:
             python intraday_daytrader.py --mode auto
           fi
 
-      - name: Publish intraday page
+      - name: Protect daily screener page
+        run: |
+          test -f docs/intraday.html
+          if [ -f docs/index.html ]; then
+            sha256sum --check /tmp/daily-index-before.sha256
+          else
+            echo "ERROR: docs/index.html disappeared during the intraday run"
+            exit 1
+          fi
+          if ! git diff --quiet -- docs/index.html; then
+            echo "ERROR: intraday workflow attempted to alter docs/index.html"
+            git diff -- docs/index.html
+            git checkout -- docs/index.html
+            exit 1
+          fi
+
+      - name: Publish intraday page only
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/intraday.html
+          git add -- docs/intraday.html
+          if git diff --cached --name-only | grep -vx "docs/intraday.html"; then
+            echo "ERROR: files other than docs/intraday.html were staged"
+            git reset
+            exit 1
+          fi
           git commit -m "Update FTSE intraday day-trade report" || echo "No report changes"
           git push
