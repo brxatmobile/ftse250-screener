@@ -1,3 +1,4 @@
+# FILE_VERSION: DAILY_WIDER_LONG_INTRADAY_POOL_2026_08_04
 """
 FTSE 250 daily candlestick screener.
 
@@ -650,10 +651,10 @@ def _json_safe(value):
     return str(value)
 
 
-def embed_daily_shortlist(report_html, top5, generated_at_iso):
-    """Embed the exact published shortlist for the later intraday assessment."""
+def embed_daily_shortlist(report_html, candidates_for_intraday, generated_at_iso):
+    """Embed a wider long-only pool for the later intraday assessment."""
     candidates = []
-    for rank, row in enumerate(top5, start=1):
+    for rank, row in enumerate(candidates_for_intraday, start=1):
         item = {key: _json_safe(value) for key, value in row.items()}
         item["daily_rank"] = rank
         item["yahoo_ticker"] = epic_to_yahoo(str(item.get("epic", "")))
@@ -711,14 +712,18 @@ def main():
 
     results.sort(key=lambda x: x["score"], reverse=True)
     top5 = results[:5]
+    intraday_pool = [row for row in results if str(row.get("direction", "")).lower() == "long"][:20]
 
-    print(f"Scored {len(results)} qualifying setups; writing top {len(top5)}.")
+    print(
+        f"Scored {len(results)} qualifying setups; writing top {len(top5)} "
+        f"and saving {len(intraday_pool)} long candidates for intraday review."
+    )
 
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.strftime("%a %d %b %Y, %H:%M UTC")
     report_html = render_html(top5, CAPITAL, RISK_PCT, generated_at)
     report_html = embed_daily_shortlist(
-        report_html, top5, generated_dt.isoformat()
+        report_html, intraday_pool, generated_dt.isoformat()
     )
 
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
