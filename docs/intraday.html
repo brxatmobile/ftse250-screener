@@ -1,97 +1,126 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FTSE opening-hour day-trade review</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE 350 intraday trades</title>
 <style>
-:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#12161F;color:#ECE7DA;font-family:Arial,sans-serif}.wrap{max-width:900px;margin:auto;padding:22px 14px 56px}a{color:#C9A24B}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid #2C333D;padding-bottom:16px}h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:#E8A493;font-size:12px;text-transform:uppercase;letter-spacing:.09em}.time,.pattern,.name,.footer{color:#8B92A0;font-size:12px}.summary,.pick{background:#1B2129;border:1px solid #2C333D;border-radius:9px;padding:15px;margin:14px 0}.summary strong{color:#C9A24B}.expiry{color:#E8A493;font-weight:700}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:#C9A24B;font-size:19px}.name{margin-left:8px}.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:#12161F;border:1px solid #2C333D;border-radius:6px;padding:9px}.metrics span{display:block;color:#8B92A0;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:#C9A24B;font-size:13px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:#8B92A0;font-size:12px;line-height:1.5}.expired{display:none;background:#1B2129;border:1px solid #2C333D;border-radius:9px;padding:22px;margin-top:18px}.footer{line-height:1.6;border-top:1px solid #2C333D;padding-top:14px;margin-top:20px}@media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#12161F;color:#ECE7DA;font-family:Arial,sans-serif}
+.wrap{max-width:920px;margin:auto;padding:22px 14px 56px}a{color:#C9A24B}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid #2C333D;padding-bottom:16px}
+h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:#E8A493;font-size:12px;text-transform:uppercase;letter-spacing:.09em}
+.time,.pattern,.name,.footer,.story{color:#8B92A0;font-size:12px}.decision,.pick,.rejected,.expired{background:#1B2129;border:1px solid #2C333D;border-radius:9px;padding:15px;margin:14px 0}
+.decision strong{color:#C9A24B}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:#C9A24B;font-size:19px}.name{margin-left:8px}
+.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:#12161F;border:1px solid #2C333D;border-radius:6px;padding:9px}
+.metrics span{display:block;color:#8B92A0;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:#C9A24B;font-size:13px}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:#8B92A0;font-size:12px;line-height:1.5}
+.expired{display:none;border-color:#E8A493}.expired h2{color:#E8A493;margin-top:0}.footer{line-height:1.6;border-top:1px solid #2C333D;padding-top:14px;margin-top:20px}
+@media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
 </style></head><body><main class="wrap">
-<div class="header"><div><div class="kicker">FTSE · opening-hour decision support</div><h1>09:00 day-trade review</h1></div><div class="time">Tue 04 Aug 2026<br>09:32 BST</div></div>
-<div id="live-content"><div class="summary"><strong>0 actionable long setup(s) from 3 candidates assessed; showing the best 3.</strong> These are conditional setups, not market orders. <span class="expiry">All recommendations expire automatically at 10:00 London time.</span> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>
-    <section class="pick">
-      <div class="pick-head">
-        <div>
-          <strong class="epic">N91</strong>
-          <span class="name">Ninety One</span>
-          <div class="pattern">Long · Bullish engulfing · daily 5.8/100</div>
-        </div>
-        <div class="score"><span style="color:#8B92A0">NO TRADE</span><strong>70/100</strong></div>
-      </div>
-      <p class="recommendation">Opening-hour evidence is not strong enough for the proposed day-trade plan.</p>
-      <div class="metrics">
-        <div><span>Previous close</span><strong>£2.15</strong></div>
-        <div><span>Opening gap</span><strong>-4.36%</strong></div>
-        <div><span>09:00 move</span><strong>+0.84%</strong></div>
-        <div><span>Opening range</span><strong>6.31%</strong></div>
-        <div><span>09:00 close / VWAP</span><strong>£2.17 / £2.18</strong></div>
-        <div><span>Close in range</span><strong>82%</strong></div>
-        <div><span>Relative volume</span><strong>2.34×</strong></div>
-        <div><span>Opening pattern</span><strong>Strong bullish opening candle</strong></div>
-        <div><span>Entry trigger</span><strong>£2.20</strong></div>
-        <div><span>Stop / target</span><strong>£2.06 / £2.47</strong></div>
-        <div><span>Indicative size</span><strong>18 shares</strong></div>
-        <div><span>Value / planned risk</span><strong>£39.55 / £2.47</strong></div>
-      </div>
-      <details><summary>Assessment details</summary>
-        <div class="detail-grid"><div><h3>Positive checks</h3><ul><li>Direction agrees with the previous close</li><li>09:00 close is near the favourable end of the opening range</li><li>Opening volume is 2.34× its recent first-hour average</li><li>Price is not excessively extended from VWAP</li><li>Strong bullish opening candle</li></ul></div><div><h3>Warnings</h3><ul><li>Price is on the wrong side of VWAP</li><li>Opening gap -4.36% is excessive</li></ul></div></div>
-      </details>
-    </section>
-    <section class="pick">
-      <div class="pick-head">
-        <div>
-          <strong class="epic">FIH</strong>
-          <span class="name">Fih Group (FIH) +25.58%</span>
-          <div class="pattern">Long · Bullish engulfing · daily 6.7/100</div>
-        </div>
-        <div class="score"><span style="color:#8B92A0">NO TRADE</span><strong>0/100</strong></div>
-      </div>
-      <p class="recommendation">Only 7 of 12 expected opening-hour bars were available</p>
-      <div class="metrics">
-        <div><span>Previous close</span><strong>—</strong></div>
-        <div><span>Opening gap</span><strong>+0.00%</strong></div>
-        <div><span>09:00 move</span><strong>+0.00%</strong></div>
-        <div><span>Opening range</span><strong>0.00%</strong></div>
-        <div><span>09:00 close / VWAP</span><strong>— / —</strong></div>
-        <div><span>Close in range</span><strong>0%</strong></div>
-        <div><span>Relative volume</span><strong>—</strong></div>
-        <div><span>Opening pattern</span><strong>—</strong></div>
-        <div><span>Entry trigger</span><strong>—</strong></div>
-        <div><span>Stop / target</span><strong>— / —</strong></div>
-        <div><span>Indicative size</span><strong>0 shares</strong></div>
-        <div><span>Value / planned risk</span><strong>£0.00 / £0.00</strong></div>
-      </div>
-      <details><summary>Assessment details</summary>
-        <div class="detail-grid"><div><h3>Positive checks</h3><ul><li>None</li></ul></div><div><h3>Warnings</h3><ul><li>None</li></ul></div></div>
-      </details>
-    </section>
-    <section class="pick">
-      <div class="pick-head">
-        <div>
-          <strong class="epic">GENI</strong>
-          <span class="name">Genincode (GENI) +18.75%</span>
-          <div class="pattern">Long · Bullish marubozu · daily 6.4/100</div>
-        </div>
-        <div class="score"><span style="color:#8B92A0">NO TRADE</span><strong>0/100</strong></div>
-      </div>
-      <p class="recommendation">Only 9 of 12 expected opening-hour bars were available</p>
-      <div class="metrics">
-        <div><span>Previous close</span><strong>—</strong></div>
-        <div><span>Opening gap</span><strong>+0.00%</strong></div>
-        <div><span>09:00 move</span><strong>+0.00%</strong></div>
-        <div><span>Opening range</span><strong>0.00%</strong></div>
-        <div><span>09:00 close / VWAP</span><strong>— / —</strong></div>
-        <div><span>Close in range</span><strong>0%</strong></div>
-        <div><span>Relative volume</span><strong>—</strong></div>
-        <div><span>Opening pattern</span><strong>—</strong></div>
-        <div><span>Entry trigger</span><strong>—</strong></div>
-        <div><span>Stop / target</span><strong>— / —</strong></div>
-        <div><span>Indicative size</span><strong>0 shares</strong></div>
-        <div><span>Value / planned risk</span><strong>£0.00 / £0.00</strong></div>
-      </div>
-      <details><summary>Assessment details</summary>
-        <div class="detail-grid"><div><h3>Positive checks</h3><ul><li>None</li></ul></div><div><h3>Warnings</h3><ul><li>None</li></ul></div></div>
-      </details>
-    </section></div>
-<div id="expired-content" class="expired"><h2>Today’s recommendations have expired</h2><p>The 10:00 London cutoff has passed. Do not use the earlier opening-hour levels as current recommendations.</p><p><a href="index.html">Return to the daily watchlist</a></p></div>
-<p class="footer">Method: daily-screen candidates are reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. Entry levels are conditional opening-range triggers. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
+<div class="header"><div><div class="kicker">FTSE 350 ex trusts · executable long trades</div><h1>Opening-hour intraday decisions</h1></div><div class="time">Tue 04 Aug 2026<br>10:55 BST</div></div>
+<div class="decision"><strong>5 executable long trades passed every mandatory check. The highest-ranked trade is marked NAP.</strong> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>
+<div id="expired-content" class="expired"><h2>Past the 10:00 cutoff</h2><p>The trades below are retained for review only. Do not use their purchase, stop or target levels now.</p></div>
+<div id="live-content">
+<section class="pick">
+<div class="pick-head"><div><strong class="epic">RIO</strong>
+<span class="name">Rio Tinto</span>
+<div class="pattern">Liquid trend/volatility candidate · daily pool 78/100</div></div>
+<div class="score"><span style="color:#4FAE73">NAP — ACTIONABLE</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Executable long setup at approximately £72.88, subject to checking the live broker quote and spread.">Executable long setup at approximately £72.88, subject to checking the live broker quote and spread.</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>£72.88 at 10:40</strong></div>
+<div><span>Maximum purchase</span><strong>£72.95</strong></div>
+<div><span>Stop / 2R target</span><strong>£72.00 / £74.64</strong></div>
+<div><span>Indicative size</span><strong>0 shares</strong></div>
+<div><span>Opening gap</span><strong>+1.63%</strong></div>
+<div><span>Opening range</span><strong>1.01%</strong></div>
+<div><span>Close / VWAP</span><strong>£72.64 / £72.46</strong></div>
+<div><span>Relative volume / turnover</span><strong>0.66× / £9,996,789</strong></div>
+</div>
+<p class="story">Price finished in the upper part of the opening range, but without a decisive full-hour candle.</p>
+<details><summary>Why</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening volume was 0.66× normal.</li><li>Opening turnover was about £9,996,789.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
+</div></details></section>
+<section class="pick">
+<div class="pick-head"><div><strong class="epic">JMAT</strong>
+<span class="name">Johnson Matthey</span>
+<div class="pattern">Liquid trend/volatility candidate · daily pool 77/100</div></div>
+<div class="score"><span style="color:#4FAE73">ACTIONABLE</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Executable long setup at approximately £20.84, subject to checking the live broker quote and spread.">Executable long setup at approximately £20.84, subject to checking the live broker quote and spread.</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>£20.84 at 10:40</strong></div>
+<div><span>Maximum purchase</span><strong>£20.84</strong></div>
+<div><span>Stop / 2R target</span><strong>£19.99 / £22.54</strong></div>
+<div><span>Indicative size</span><strong>1 shares</strong></div>
+<div><span>Opening gap</span><strong>+1.27%</strong></div>
+<div><span>Opening range</span><strong>3.39%</strong></div>
+<div><span>Close / VWAP</span><strong>£20.60 / £20.51</strong></div>
+<div><span>Relative volume / turnover</span><strong>6.71× / £2,850,937</strong></div>
+</div>
+<p class="story">A strong bullish opening candle held near the upper part of the range.</p>
+<details><summary>Why</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening volume was 6.71× normal.</li><li>Opening turnover was about £2,850,937.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
+</div></details></section>
+<section class="pick">
+<div class="pick-head"><div><strong class="epic">HBR</strong>
+<span class="name">Harbour Energy</span>
+<div class="pattern">Liquid trend/volatility candidate · daily pool 77/100</div></div>
+<div class="score"><span style="color:#4FAE73">ACTIONABLE</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Executable long setup at approximately £2.45, subject to checking the live broker quote and spread.">Executable long setup at approximately £2.45, subject to checking the live broker quote and spread.</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>£2.45 at 10:40</strong></div>
+<div><span>Maximum purchase</span><strong>£2.48</strong></div>
+<div><span>Stop / 2R target</span><strong>£2.35 / £2.66</strong></div>
+<div><span>Indicative size</span><strong>16 shares</strong></div>
+<div><span>Opening gap</span><strong>+0.42%</strong></div>
+<div><span>Opening range</span><strong>4.36%</strong></div>
+<div><span>Close / VWAP</span><strong>£2.44 / £2.43</strong></div>
+<div><span>Relative volume / turnover</span><strong>1.85× / £1,268,714</strong></div>
+</div>
+<p class="story">Price finished in the upper part of the opening range, but without a decisive full-hour candle.</p>
+<details><summary>Why</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening volume was 1.85× normal.</li><li>Opening turnover was about £1,268,714.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
+</div></details></section>
+<section class="pick">
+<div class="pick-head"><div><strong class="epic">LAND</strong>
+<span class="name">Land Securities</span>
+<div class="pattern">Liquid trend/volatility candidate · daily pool 74/100</div></div>
+<div class="score"><span style="color:#4FAE73">ACTIONABLE</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Executable long setup at approximately £7.19, subject to checking the live broker quote and spread.">Executable long setup at approximately £7.19, subject to checking the live broker quote and spread.</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>£7.19 at 10:40</strong></div>
+<div><span>Maximum purchase</span><strong>£7.20</strong></div>
+<div><span>Stop / 2R target</span><strong>£7.13 / £7.31</strong></div>
+<div><span>Indicative size</span><strong>5 shares</strong></div>
+<div><span>Opening gap</span><strong>+0.53%</strong></div>
+<div><span>Opening range</span><strong>0.73%</strong></div>
+<div><span>Close / VWAP</span><strong>£7.17 / £7.16</strong></div>
+<div><span>Relative volume / turnover</span><strong>0.88× / £1,061,705</strong></div>
+</div>
+<p class="story">Price finished in the upper part of the opening range, but without a decisive full-hour candle.</p>
+<details><summary>Why</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening volume was 0.88× normal.</li><li>Opening turnover was about £1,061,705.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
+</div></details></section>
+<section class="pick">
+<div class="pick-head"><div><strong class="epic">MNDI</strong>
+<span class="name">Mondi</span>
+<div class="pattern">Liquid trend/volatility candidate · daily pool 82/100</div></div>
+<div class="score"><span style="color:#4FAE73">ACTIONABLE</span><strong>90/100</strong></div></div>
+<p class="recommendation" data-original="Executable long setup at approximately £9.04, subject to checking the live broker quote and spread.">Executable long setup at approximately £9.04, subject to checking the live broker quote and spread.</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>£9.04 at 10:35</strong></div>
+<div><span>Maximum purchase</span><strong>£9.04</strong></div>
+<div><span>Stop / 2R target</span><strong>£8.84 / £9.43</strong></div>
+<div><span>Indicative size</span><strong>4 shares</strong></div>
+<div><span>Opening gap</span><strong>+0.12%</strong></div>
+<div><span>Opening range</span><strong>1.75%</strong></div>
+<div><span>Close / VWAP</span><strong>£8.97 / £8.93</strong></div>
+<div><span>Relative volume / turnover</span><strong>0.14× / £410,731</strong></div>
+</div>
+<p class="story">Price finished in the upper part of the opening range, but without a decisive full-hour candle.</p>
+<details><summary>Why</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening turnover was about £410,731.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>Opening volume was unavailable or below the minimum.</li></ul></div>
+</div></details></section>
+<details class="rejected"><summary>Other candidates assessed but not recommended</summary><ul><li><strong>GLEN</strong> — DO NOT CHASE: No trade at the current price. It has moved beyond the maximum acceptable purchase price of £5.53.</li><li><strong>BA</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £22.10; do not pay above £22.22.</li><li><strong>JDW</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £8.15; do not pay above £8.19.</li><li><strong>BPT</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £3.48; do not pay above £3.51.</li><li><strong>BAB</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £11.85; do not pay above £11.94.</li><li><strong>QQ</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £5.35; do not pay above £5.39.</li><li><strong>CRDA</strong> — DO NOT CHASE: No trade at the current price. It has moved beyond the maximum acceptable purchase price of £32.70.</li><li><strong>UKW</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £1.16; do not pay above £1.16.</li><li><strong>GFTU</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £10.20; do not pay above £10.29.</li><li><strong>EXPN</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £28.46; do not pay above £28.61.</li><li><strong>BWY</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £20.65; do not pay above £20.72.</li><li><strong>SHEL</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £34.20; do not pay above £34.27.</li><li><strong>REL</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £27.00; do not pay above £27.13.</li><li><strong>CHG</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £6.19; do not pay above £6.22.</li><li><strong>ICG</strong> — WAIT FOR BREAK: Not ready yet. Consider only if price breaks £19.91; do not pay above £20.02.</li><li><strong>BCG</strong> — REJECTED: The stop structure was invalid.</li><li><strong>NWG</strong> — REJECTED: The stop structure was invalid.</li><li><strong>BTRW</strong> — REJECTED: The stop structure was invalid.</li><li><strong>SGE</strong> — WAIT FOR BREAK: Opening volume was unavailable or below the minimum.</li><li><strong>BME</strong> — WAIT FOR BREAK: Opening volume was unavailable or below the minimum.</li><li><strong>BOY</strong> — WAIT FOR BREAK: Opening volume was unavailable or below the minimum.</li><li><strong>SSPG</strong> — REJECTED: The opening gap of -2.61% was excessive.</li><li><strong>KGF</strong> — WAIT FOR BREAK: Opening volume was unavailable or below the minimum.</li><li><strong>PAGE</strong> — REJECTED: Opening turnover of about £88,437 was too low.</li><li><strong>AAL</strong> — ACTIONABLE: Opening volume was unavailable or below the minimum.</li><li><strong>III</strong> — WAIT FOR BREAK: Price did not hold in the upper part of the opening range.</li><li><strong>AUTO</strong> — WAIT FOR BREAK: Opening volume was unavailable or below the minimum.</li><li><strong>VOD</strong> — REJECTED: The first hour did not finish above the previous close.</li><li><strong>FAN</strong> — REJECTED: The opening gap of +2.37% was excessive.; The opening range of 6.16% was not suitable.</li><li><strong>DSCV</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.; The opening gap of -2.33% was excessive.</li><li><strong>ANTO</strong> — REJECTED: The opening gap of +2.33% was excessive.; Price did not hold in the upper part of the opening range.</li><li><strong>TPK</strong> — REJECTED: The opening gap of +9.35% was excessive.; The opening range of 10.14% was not suitable.</li><li><strong>GRG</strong> — REJECTED: The first hour did not finish above the previous close.; Opening volume was unavailable or below the minimum.</li><li><strong>DOM</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>BP</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>RR</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>WEIR</strong> — REJECTED: Price did not hold in the upper part of the opening range.; Opening volume was unavailable or below the minimum.</li><li><strong>ATG</strong> — REJECTED: The first hour did not finish above the previous close.; The opening gap of -2.53% was excessive.</li><li><strong>BREE</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>VTY</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>VCT</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.; Opening volume was unavailable or below the minimum.</li><li><strong>MGAM</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>GNC</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>BRBY</strong> — REJECTED: The first hour did not finish above the previous close.; Price did not hold in the upper part of the opening range.</li><li><strong>RS1</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>ELM</strong> — REJECTED: The first hour did not finish above the previous close.; Price did not hold in the upper part of the opening range.</li><li><strong>WPP</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>KNOS</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.; Price did not hold in the upper part of the opening range.</li><li><strong>MAB</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.; The first hour did not finish above the previous close.</li><li><strong>ABF</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>TRN</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.; The first hour did not finish above the previous close.</li><li><strong>RCP</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>PETS</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>FOUR</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.; The first hour did not finish above the previous close.</li><li><strong>ROR</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li></ul></details></div>
+<p class="footer">Only trades that pass every mandatory check are shown as recommendations. The engine requires adequate five-minute data, controlled gap and range, price above the previous close and VWAP, sufficient liquidity and turnover, a valid stop, and a current price within the permitted entry zone. It shows up to five trades and never fills the list with weaker names.</p>
 </main><script>
-(function(){const expiry=new Date('2026-08-04T10:00:00+01:00');const live=document.getElementById('live-content');const expired=document.getElementById('expired-content');function enforce(){if(new Date()>=expiry){live.style.display='none';expired.style.display='block';}}enforce();setInterval(enforce,30000);})();
+(function(){const expiry=new Date('2026-08-04T10:00:00+01:00');const expired=document.getElementById('expired-content');
+function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){const original=el.dataset.original||el.textContent;el.dataset.original=original;el.textContent='PAST 10:00 — Do not follow this recommendation now. Original assessment: '+original;});}}
+enforce();setInterval(enforce,30000);})();
 </script></body></html>
