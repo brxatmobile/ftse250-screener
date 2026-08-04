@@ -1,6 +1,5 @@
-# FILE_VERSION: DAILY_WIDER_LONG_INTRADAY_POOL_2026_08_04
 """
-FTSE 250 daily candlestick screener.
+FTSE 350 ex-investment-trust daily candlestick screener.
 
 - Scrapes the current FTSE 250 constituent list from the London Stock Exchange
   site (so the universe stays current without hardcoding tickers).
@@ -36,8 +35,13 @@ import yfinance as yf
 
 CAPITAL = float(os.environ.get("CAPITAL", "5000"))
 RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
+INTRADAY_POOL_SIZE = int(os.environ.get("INTRADAY_POOL_SIZE", "60"))
+MIN_DAILY_TURNOVER_GBP = float(os.environ.get("MIN_DAILY_TURNOVER_GBP", "2000000"))
+MIN_SHARE_PRICE_GBP = float(os.environ.get("MIN_SHARE_PRICE_GBP", "1.00"))
+MIN_ATR_PCT = float(os.environ.get("MIN_ATR_PCT", "1.0"))
+MAX_ATR_PCT = float(os.environ.get("MAX_ATR_PCT", "6.0"))
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "docs", "index.html")
-LSE_URL = "https://www.lse.co.uk/indices/ftse-250/constituents.html"
+LSE_URL = "https://www.lse.co.uk/indices/ftse-350/constituents.html"
 LSE_HOME_URL = "https://www.lse.co.uk/"
 LSE_INDICES_URL = "https://www.lse.co.uk/indices/"
 
@@ -198,6 +202,24 @@ def _parse_lse_constituents(page_html):
     return seen
 
 
+TRUST_NAME_TERMS = (
+    "INVESTMENT TRUST", "INVESTMENT COMPANY", "CAPITAL GEARING",
+    "GLOBAL SMALLER COMPANIES", "WORLDWIDE HEALTHCARE TRUST",
+    "SCOTTISH MORTGAGE", "ALLIANCE WITAN", "TEMPLE BAR",
+    "F&C INVESTMENT TRUST", "POLAR CAPITAL GLOBAL FINANCIALS TRUST",
+    "INFRASTRUCTURE PLC", "RENEWABLES INFRASTRUCTURE",
+)
+FUND_NAME_TERMS = (
+    " ETF", "FUND PLC", "INCOME FUND", "PROPERTY INCOME",
+    "REIT PLC", "REAL ESTATE INVESTMENT TRUST",
+)
+
+def is_excluded_collective(name):
+    """Exclude investment trusts, listed funds, ETFs and REIT-style vehicles."""
+    upper = f" {str(name).upper()} "
+    return any(term in upper for term in TRUST_NAME_TERMS + FUND_NAME_TERMS)
+
+
 def fetch_ftse250_constituents():
     """
     Scrape ticker -> name pairs from the LSE FTSE 250 constituents page.
@@ -300,7 +322,15 @@ def fetch_ftse250_constituents():
                 "may have been returned."
             )
 
-        print(f"  Parsed {len(constituents)} LSE constituents.")
+        before_filter = len(constituents)
+        constituents = {
+            epic: name for epic, name in constituents.items()
+            if not is_excluded_collective(name)
+        }
+        print(
+            f"  Parsed {before_filter} FTSE 350 constituents; "
+            f"retained {len(constituents)} operating companies after trust/fund exclusions."
+        )
         return constituents
 
     finally:
@@ -493,6 +523,90 @@ def analyze(epic, name, df):
     }
 
 
+def build_intraday_candidate(epic, name, df):
+    """
+    Build the separate intraday candidate pool.
+
+    This does not require a named candlestick pattern. It looks for operating
+    companies with adequate price, turnover and useful recent volatility, then
+    retains long-biased names for the opening-hour review.
+    """
+    frame = df.dropna(subset=["Open", "High", "Low", "Close", "Volume"]).copy()
+    if len(frame) < 25:
+        return None
+
+    opens = frame["Open"].astype(float)
+    highs = frame["High"].astype(float)
+    lows = frame["Low"].astype(float)
+    closes = frame["Close"].astype(float)
+    volumes = frame["Volume"].fillna(0).astype(float)
+
+    close = float(closes.iloc[-1])
+    price_gbp = gbx_to_gbp(close)
+    if price_gbp < MIN_SHARE_PRICE_GBP:
+        return None
+
+    previous_close = closes.shift(1)
+    true_ranges = pd.concat(
+        [
+            highs - lows,
+            (highs - previous_close).abs(),
+            (lows - previous_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr14 = float(true_ranges.tail(14).mean())
+    atr_pct = (atr14 / close) * 100 if close > 0 else 0.0
+
+    avg_volume_20 = float(volumes.tail(20).mean())
+    last_volume = float(volumes.iloc[-1])
+    avg_turnover_gbp = avg_volume_20 * price_gbp
+    volume_ratio = last_volume / avg_volume_20 if avg_volume_20 > 0 else 0.0
+
+    sma20_value = float(closes.tail(20).mean())
+    momentum_5d = ((close / float(closes.iloc[-6])) - 1.0) * 100
+    momentum_20d = ((close / float(closes.iloc[-21])) - 1.0) * 100
+
+    if avg_turnover_gbp < MIN_DAILY_TURNOVER_GBP:
+        return None
+    if not (MIN_ATR_PCT <= atr_pct <= MAX_ATR_PCT):
+        return None
+
+    # Long bias without making the pool so narrow that no intraday choices remain.
+    if close < sma20_value * 0.985 or momentum_5d < -1.5:
+        return None
+
+    trend_pct = ((close / sma20_value) - 1.0) * 100 if sma20_value else 0.0
+    score = 0.0
+    score += min(25.0, max(0.0, 12.5 + trend_pct * 3.0))
+    score += min(20.0, max(0.0, 10.0 + momentum_5d * 2.0))
+    score += min(15.0, max(0.0, 7.5 + momentum_20d * 0.75))
+    score += min(15.0, max(0.0, volume_ratio * 7.5))
+    score += min(15.0, max(0.0, atr_pct * 3.0))
+    score += min(10.0, max(0.0, math.log10(max(avg_turnover_gbp, 1.0)) - 5.0) * 5.0)
+
+    daily_stop = float(lows.tail(3).min()) * 0.997
+    risk = max(close - daily_stop, 0.0)
+
+    return {
+        "epic": epic,
+        "name": name,
+        "direction": "Long",
+        "pattern": "Liquid trend/volatility candidate",
+        "score": min(100.0, score),
+        "entry": close,
+        "stop": daily_stop,
+        "target": close + 2.0 * risk,
+        "risk_per_share": risk,
+        "daily_sma20": sma20_value,
+        "daily_momentum_5d_pct": momentum_5d,
+        "daily_momentum_20d_pct": momentum_20d,
+        "daily_volume_ratio": volume_ratio,
+        "avg_daily_turnover_gbp": avg_turnover_gbp,
+        "atr14_pct": atr_pct,
+    }
+
+
 def render_html(results, capital, risk_pct, generated_at):
     risk_amount = capital * risk_pct / 100
 
@@ -597,7 +711,7 @@ def render_html(results, capital, risk_pct, generated_at):
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FTSE 250 &middot; Today's top five</title>
+<title>FTSE 350 ex trusts &middot; Today's top five</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:0; padding:0; }}
@@ -612,13 +726,13 @@ body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:
   <nav class="site-nav"><a class="active" href="index.html">Daily screener</a><a href="intraday.html">Intraday</a><a href="backtest.html">Backtest</a><a href="backtest-research.html">Research</a></nav>
   <div style="display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid {HAIRLINE};padding-bottom:18px;margin-bottom:24px;flex-wrap:wrap;gap:8px;">
     <div>
-      <div style="font-size:11px;letter-spacing:.12em;color:{SALMON};text-transform:uppercase;margin-bottom:4px;">FTSE 250 &middot; 09:30 review</div>
+      <div style="font-size:11px;letter-spacing:.12em;color:{SALMON};text-transform:uppercase;margin-bottom:4px;">FTSE 350 ex trusts &middot; daily review</div>
       <h1 style="font-family:'Fraunces',serif;font-size:28px;font-weight:600;margin:0;">Today's top five</h1>
     </div>
     <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:{MUTED};text-align:right;">{generated_at}</div>
   </div>
   <div style="font-size:12px;color:{MUTED};margin-bottom:22px;">
-    Capital £{capital:,.2f} &middot; maximum risk £{risk_amount:.2f} per trade ({risk_pct:g}%) &middot; screened automatically each morning from the full FTSE 250.
+    Capital £{capital:,.2f} &middot; maximum risk £{risk_amount:.2f} per trade ({risk_pct:g}%) &middot; screened automatically from FTSE 350 operating companies, excluding trusts and funds.
   </div>
   {rows_html}
   <p style="font-size:11.5px;color:{MUTED};line-height:1.6;margin-top:24px;border-top:1px solid {HAIRLINE};padding-top:16px;">
@@ -651,18 +765,19 @@ def _json_safe(value):
     return str(value)
 
 
-def embed_daily_shortlist(report_html, candidates_for_intraday, generated_at_iso):
-    """Embed a wider long-only pool for the later intraday assessment."""
+def embed_daily_shortlist(report_html, intraday_pool, generated_at_iso):
+    """Embed the broad liquid long-candidate pool used by the intraday review."""
     candidates = []
-    for rank, row in enumerate(candidates_for_intraday, start=1):
+    for rank, row in enumerate(intraday_pool, start=1):
         item = {key: _json_safe(value) for key, value in row.items()}
         item["daily_rank"] = rank
         item["yahoo_ticker"] = epic_to_yahoo(str(item.get("epic", "")))
         candidates.append(item)
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": generated_at_iso,
+        "selection": "liquid_long_trend_volume_pool",
         "candidates": candidates,
     }
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -673,7 +788,7 @@ def embed_daily_shortlist(report_html, candidates_for_intraday, generated_at_iso
     return report_html.replace("</body>", block + "</body>", 1)
 
 def main():
-    print("Fetching FTSE 250 constituent list...")
+    print("Fetching FTSE 350 constituent list...")
     constituents = fetch_ftse250_constituents()
     print(f"Found {len(constituents)} constituents.")
 
@@ -693,6 +808,7 @@ def main():
     )
 
     results = []
+    intraday_candidates = []
     for yt in yahoo_tickers:
         try:
             df = data[yt] if isinstance(data.columns, pd.MultiIndex) else data
@@ -703,6 +819,9 @@ def main():
         epic = ticker_to_epic[yt]
         name = constituents[epic]
         try:
+            intraday_candidate = build_intraday_candidate(epic, name, df)
+            if intraday_candidate:
+                intraday_candidates.append(intraday_candidate)
             r = analyze(epic, name, df)
         except Exception as exc:
             print(f"  skipping {epic}: {exc}")
@@ -712,11 +831,12 @@ def main():
 
     results.sort(key=lambda x: x["score"], reverse=True)
     top5 = results[:5]
-    intraday_pool = [row for row in results if str(row.get("direction", "")).lower() == "long"][:20]
+    intraday_candidates.sort(key=lambda x: x["score"], reverse=True)
+    intraday_pool = intraday_candidates[:INTRADAY_POOL_SIZE]
 
     print(
-        f"Scored {len(results)} qualifying setups; writing top {len(top5)} "
-        f"and saving {len(intraday_pool)} long candidates for intraday review."
+        f"Scored {len(results)} candlestick setups; writing top {len(top5)}. "
+        f"Saved {len(intraday_pool)} liquid long candidates for intraday review."
     )
 
     generated_dt = dt.datetime.now(dt.timezone.utc)
