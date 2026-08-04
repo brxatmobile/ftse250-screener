@@ -1,42 +1,16 @@
-# FILE_VERSION: INTRADAY_WIDER_LONG_POOL_2026_08_04
-"""
-FTSE opening-hour day-trade assessment.
-
-This is an add-on to the existing screener.py. It does not alter the daily
-screener or backtest. The daily screener supplies the shortlist; this script
-assesses the completed 08:00-09:00 London opening hour using 5-minute bars.
-
-Normal scheduled behaviour (Europe/London):
-  09:00-09:20  Build docs/intraday.html
-  10:00-10:20  Replace it with an expired notice
-
-Manual examples:
-  python intraday_daytrader.py --mode analyse --force
-  python intraday_daytrader.py --mode expire --force
-
-Environment variables:
-  CAPITAL                    default 5000
-  RISK_PCT                   default 1
-  TOP_N                      default 5
-  MAX_GAP_PCT                default 2.0
-  TARGET_R                   default 2.0
-  MIN_INTRADAY_SCORE         default 65
-  MIN_OPENING_VOLUME_RATIO   default 0.60
-  MAX_VWAP_DISTANCE_PCT      default 1.25
-  ENTRY_BUFFER_PCT           default 0.05
-"""
-
-# FILE_VERSION: INTRADAY_DAYTRADER_NO_EMAIL_2026_08_02
-
+# FILE_VERSION: FTSE350_UP_TO_FIVE_ACTIONABLE_LONGS_2026_08_04
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import html as html_lib
+import json
 import math
 import os
+import re
 import sys
 from pathlib import Path
+from string import Template
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -44,504 +18,398 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-import screener as scr
-
 LONDON = ZoneInfo("Europe/London")
 UTC = dt.timezone.utc
 
 CAPITAL = float(os.environ.get("CAPITAL", "5000"))
 RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
-TOP_N = int(os.environ.get("TOP_N", "5"))
-CANDIDATE_POOL_N = int(os.environ.get("CANDIDATE_POOL_N", "20"))
-MAX_GAP_PCT = float(os.environ.get("MAX_GAP_PCT", "2.0"))
-TARGET_R = float(os.environ.get("TARGET_R", "2.0"))
-MIN_INTRADAY_SCORE = float(os.environ.get("MIN_INTRADAY_SCORE", "65"))
-MIN_OPENING_VOLUME_RATIO = float(os.environ.get("MIN_OPENING_VOLUME_RATIO", "0.60"))
+POOL_N = int(os.environ.get("CANDIDATE_POOL_N", "60"))
+TARGET_R = float(os.environ.get("TARGET_R", "2"))
+MAX_GAP_PCT = float(os.environ.get("MAX_GAP_PCT", "2.5"))
+MAX_RANGE_PCT = float(os.environ.get("MAX_OPENING_RANGE_PCT", "5.0"))
+MIN_RANGE_PCT = float(os.environ.get("MIN_OPENING_RANGE_PCT", "0.35"))
+MIN_VOLUME_RATIO = float(os.environ.get("MIN_OPENING_VOLUME_RATIO", "0.80"))
+MIN_OPENING_TURNOVER_GBP = float(os.environ.get("MIN_OPENING_TURNOVER_GBP", "100000"))
 MAX_VWAP_DISTANCE_PCT = float(os.environ.get("MAX_VWAP_DISTANCE_PCT", "1.25"))
 ENTRY_BUFFER_PCT = float(os.environ.get("ENTRY_BUFFER_PCT", "0.05"))
+MAX_ENTRY_EXTENSION_R = float(os.environ.get("MAX_ENTRY_EXTENSION_R", "0.25"))
+MIN_ACTIONABLE_BARS = int(os.environ.get("MIN_ACTIONABLE_BARS", "10"))
+MAX_ACTIONABLE_TRADES = int(os.environ.get("MAX_ACTIONABLE_TRADES", "5"))
+MIN_ACTIONABLE_SCORE = float(os.environ.get("MIN_ACTIONABLE_SCORE", "72"))
 
-OUTPUT_PATH = Path(__file__).resolve().parent / "docs" / "intraday.html"
+ROOT = Path(__file__).resolve().parent
+DAILY_INDEX_PATH = ROOT / "docs" / "index.html"
+OUTPUT_PATH = ROOT / "docs" / "intraday.html"
 
-INK = "#12161F"
-PANEL = "#1B2129"
-HAIRLINE = "#2C333D"
-BRASS = "#C9A24B"
-SALMON = "#E8A493"
-BULL = "#4FAE73"
-BEAR = "#D1594B"
-PAPER = "#ECE7DA"
-MUTED = "#8B92A0"
+INK="#12161F"; PANEL="#1B2129"; HAIRLINE="#2C333D"; BRASS="#C9A24B"
+SALMON="#E8A493"; BULL="#4FAE73"; BEAR="#D1594B"; PAPER="#ECE7DA"; MUTED="#8B92A0"
 
+def gbx_to_gbp(value: float) -> float:
+    return float(value) / 100.0
 
-def finite_number(value: Any) -> bool:
+def finite(value: Any) -> bool:
     try:
         return math.isfinite(float(value))
     except (TypeError, ValueError):
         return False
 
-
-def london_now() -> dt.datetime:
+def now_london() -> dt.datetime:
     return dt.datetime.now(UTC).astimezone(LONDON)
 
-
-def normalise_frame(frame: pd.DataFrame) -> pd.DataFrame:
+def normalise(frame: pd.DataFrame) -> pd.DataFrame:
     if frame is None or frame.empty:
         return pd.DataFrame()
     frame = frame.copy()
     if isinstance(frame.columns, pd.MultiIndex):
         frame.columns = frame.columns.get_level_values(0)
-    needed = ["Open", "High", "Low", "Close", "Volume"]
-    if any(column not in frame.columns for column in needed):
+    required = ["Open","High","Low","Close","Volume"]
+    if any(c not in frame.columns for c in required):
         return pd.DataFrame()
-    frame = frame.dropna(subset=["Open", "High", "Low", "Close"])
-    if frame.empty:
-        return frame
-    index = pd.DatetimeIndex(frame.index)
-    if index.tz is None:
-        index = index.tz_localize(UTC)
-    frame.index = index.tz_convert(LONDON)
+    frame = frame.dropna(subset=["Open","High","Low","Close"])
+    idx = pd.DatetimeIndex(frame.index)
+    if idx.tz is None:
+        idx = idx.tz_localize(UTC)
+    frame.index = idx.tz_convert(LONDON)
     return frame.sort_index()
 
-
-def enforce_window(now: dt.datetime, mode: str, force: bool) -> None:
-    if force:
-        return
-    if now.weekday() >= 5:
-        print(f"Skipping: {now:%A} is not a trading weekday.")
-        raise SystemExit(0)
-    valid = (
-        mode == "analyse" and now.hour == 9 and 0 <= now.minute <= 20
-    ) or (
-        mode == "expire" and now.hour == 10 and 0 <= now.minute <= 20
+def load_pool() -> list[dict[str, Any]]:
+    if not DAILY_INDEX_PATH.exists():
+        raise RuntimeError("docs/index.html is missing; run the daily screener first.")
+    page = DAILY_INDEX_PATH.read_text(encoding="utf-8")
+    match = re.search(
+        r'<script[^>]*id=["\']daily-shortlist-data["\'][^>]*>(.*?)</script>',
+        page, flags=re.I | re.S
     )
-    if not valid:
-        print(f"Skipping {mode} at {now:%Y-%m-%d %H:%M %Z}: outside its London window.")
-        raise SystemExit(0)
+    if not match:
+        raise RuntimeError("The daily page contains no embedded intraday candidate pool.")
+    payload = json.loads(match.group(1).replace("<\\/", "</"))
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise RuntimeError("The embedded intraday candidate pool is empty.")
+    generated = dt.datetime.fromisoformat(str(payload["generated_at_utc"]).replace("Z","+00:00"))
+    if generated.tzinfo is None:
+        generated = generated.replace(tzinfo=UTC)
+    if generated.astimezone(LONDON).date() != now_london().date():
+        raise RuntimeError("The embedded candidate pool is not from today; run the daily screener first.")
+    return [c for c in candidates[:POOL_N] if str(c.get("direction","")).lower()=="long"]
 
+def history(ticker: str) -> pd.DataFrame:
+    return normalise(yf.download(
+        ticker, period="5d", interval="5m", progress=False,
+        auto_adjust=False, prepost=False
+    ))
 
-def auto_mode(now: dt.datetime) -> str:
-    if now.hour == 10:
-        return "expire"
-    return "analyse"
+def prior_close(frame: pd.DataFrame, today: dt.date) -> float | None:
+    prior = frame[frame.index.date < today]
+    return float(prior.iloc[-1]["Close"]) if not prior.empty else None
 
-
-def get_daily_candidates() -> list[dict[str, Any]]:
-    print("Getting the daily shortlist through the existing screener.py...")
-    constituents = scr.fetch_ftse250_constituents()
-    epics = list(constituents)
-    tickers = [scr.epic_to_yahoo(epic) for epic in epics]
-    ticker_to_epic = dict(zip(tickers, epics))
-
-    data = yf.download(
-        tickers,
-        period="3mo",
-        interval="1d",
-        group_by="ticker",
-        threads=True,
-        progress=False,
-        auto_adjust=False,
-    )
-
-    ranked: list[dict[str, Any]] = []
-    for ticker in tickers:
-        try:
-            frame = data[ticker] if isinstance(data.columns, pd.MultiIndex) else data
-        except Exception:
+def prior_opening_volume(frame: pd.DataFrame, today: dt.date) -> float | None:
+    totals=[]
+    for d in sorted(set(frame.index.date)):
+        if d >= today:
             continue
-        if frame is None or frame.empty:
-            continue
-        frame = frame.dropna(subset=["Open", "High", "Low", "Close"])
-        if frame.empty:
-            continue
-        epic = ticker_to_epic[ticker]
-        try:
-            result = scr.analyze(epic, constituents[epic], frame)
-        except Exception as exc:
-            print(f"Skipping {epic}: daily analysis failed: {exc}")
-            continue
-        if result:
-            result["yahoo_ticker"] = ticker
-            ranked.append(result)
-
-    ranked.sort(key=lambda row: float(row.get("score", 0)), reverse=True)
-    return ranked[:TOP_N]
-
-
-def get_intraday_history(ticker: str) -> pd.DataFrame:
-    raw = yf.download(
-        ticker,
-        period="5d",
-        interval="5m",
-        progress=False,
-        auto_adjust=False,
-        prepost=False,
-    )
-    return normalise_frame(raw)
-
-
-def previous_close_from_history(frame: pd.DataFrame, today: dt.date) -> float | None:
-    earlier = frame[frame.index.date < today]
-    if earlier.empty:
-        return None
-    close = earlier.iloc[-1]["Close"]
-    return float(close) if finite_number(close) else None
-
-
-def average_prior_opening_volume(frame: pd.DataFrame, today: dt.date) -> float | None:
-    totals: list[float] = []
-    for trading_date in sorted(set(frame.index.date)):
-        if trading_date >= today:
-            continue
-        day = frame[frame.index.date == trading_date]
-        opening = day[(day.index.time >= dt.time(8, 0)) & (day.index.time < dt.time(9, 0))]
-        if not opening.empty:
-            volume = float(opening["Volume"].fillna(0).sum())
-            if volume > 0:
-                totals.append(volume)
+        day=frame[frame.index.date==d]
+        opening=day[(day.index.time>=dt.time(8,0))&(day.index.time<dt.time(9,0))]
+        total=float(opening["Volume"].fillna(0).sum())
+        if total>0:
+            totals.append(total)
     return float(np.mean(totals)) if totals else None
 
+def opening_story(opening: pd.DataFrame) -> str:
+    if opening.empty:
+        return "No opening-hour bars were available."
+    first=float(opening.iloc[0]["Open"]); last=float(opening.iloc[-1]["Close"])
+    high=float(opening["High"].max()); low=float(opening["Low"].min())
+    span=max(high-low,1e-9); body=abs(last-first)
+    if last>first and body/span>=0.60:
+        return "A strong bullish opening candle held near the upper part of the range."
+    if last<first and body/span>=0.60:
+        return "A strong bearish opening candle dominated the first hour."
+    location=(last-low)/span*100
+    if location>=70:
+        return "Price finished in the upper part of the opening range, but without a decisive full-hour candle."
+    if location<=30:
+        return "Price finished in the lower part of the opening range."
+    return "Price remained indecisive near the middle of the opening range."
 
-def first_hour_pattern(opening: pd.DataFrame) -> tuple[str, float]:
-    first_open = float(opening.iloc[0]["Open"])
-    last_close = float(opening.iloc[-1]["Close"])
-    high = float(opening["High"].max())
-    low = float(opening["Low"].min())
-    span = max(high - low, 1e-9)
-    body = abs(last_close - first_open)
-    upper = high - max(first_open, last_close)
-    lower = min(first_open, last_close) - low
-
-    if last_close > first_open and body / span >= 0.60:
-        return "Strong bullish opening candle", 10.0
-    if last_close < first_open and body / span >= 0.60:
-        return "Strong bearish opening candle", 10.0
-    if lower / span >= 0.45 and body / span <= 0.40:
-        return "Bullish rejection from the opening low", 8.0
-    if upper / span >= 0.45 and body / span <= 0.40:
-        return "Bearish rejection from the opening high", 8.0
-    return "Indecisive opening-hour structure", 2.0
-
-
-def assess_candidate(candidate: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
-    ticker = candidate["yahoo_ticker"]
-    frame = get_intraday_history(ticker)
-    direction = str(candidate.get("direction", "Long"))
-    long_side = direction.lower() == "long"
-
-    result: dict[str, Any] = {
-        "epic": candidate.get("epic", ticker.replace(".L", "")),
-        "name": candidate.get("name", ""),
-        "ticker": ticker,
-        "direction": direction,
-        "daily_pattern": candidate.get("pattern", ""),
-        "daily_score": float(candidate.get("score", 0)),
-        "status": "NO TRADE",
-        "recommendation": "No usable opening-hour data",
-        "intraday_score": 0.0,
-        "checks": [],
+def assess(candidate: dict[str, Any], now: dt.datetime) -> dict[str, Any]:
+    ticker=str(candidate.get("yahoo_ticker") or f"{candidate['epic']}.L")
+    frame=history(ticker)
+    base={
+        "epic":candidate.get("epic",ticker.replace(".L","")),
+        "name":candidate.get("name",""),
+        "ticker":ticker,
+        "daily_score":float(candidate.get("score",0)),
+        "daily_pattern":candidate.get("pattern","Long candidate"),
+        "status":"REJECTED",
+        "recommendation":"No trade.",
+        "score":0.0,
+        "reasons":[],
+        "checks":[],
     }
     if frame.empty:
-        return result
+        base["reasons"]=["No intraday market data was available."]
+        return base
 
-    today = now.date()
-    today_frame = frame[frame.index.date == today]
-    opening = today_frame[(today_frame.index.time >= dt.time(8, 0)) & (today_frame.index.time < dt.time(9, 0))]
-    if len(opening) < 10:
-        result["recommendation"] = f"Only {len(opening)} of 12 expected opening-hour bars were available"
-        return result
+    today=now.date()
+    today_frame=frame[frame.index.date==today]
+    opening=today_frame[(today_frame.index.time>=dt.time(8,0))&(today_frame.index.time<dt.time(9,0))]
+    bars=len(opening)
+    base["bars"]=bars
+    base["story"]=opening_story(opening)
 
-    previous_close = previous_close_from_history(frame, today)
-    if previous_close is None or previous_close <= 0:
-        result["recommendation"] = "Previous close unavailable"
-        return result
+    pc=prior_close(frame,today)
+    if opening.empty or pc is None or pc<=0:
+        base["status"]="DATA ONLY"
+        base["recommendation"]="No recommendation; the available data is insufficient."
+        base["reasons"]=["Previous close or opening-hour data was unavailable."]
+        return base
 
-    open_price = float(opening.iloc[0]["Open"])
-    high = float(opening["High"].max())
-    low = float(opening["Low"].min())
-    close = float(opening.iloc[-1]["Close"])
-    volume = float(opening["Volume"].fillna(0).sum())
-    typical = (opening["High"] + opening["Low"] + opening["Close"]) / 3
-    volume_series = opening["Volume"].fillna(0)
-    vwap = float((typical * volume_series).sum() / volume_series.sum()) if volume_series.sum() > 0 else close
-    gap_pct = ((open_price - previous_close) / previous_close) * 100
-    move_pct = ((close - previous_close) / previous_close) * 100
-    range_pct = ((high - low) / previous_close) * 100
-    close_location = ((close - low) / max(high - low, 1e-9)) * 100
-    vwap_distance_pct = abs((close - vwap) / vwap) * 100 if vwap else 0
+    open_px=float(opening.iloc[0]["Open"])
+    high=float(opening["High"].max()); low=float(opening["Low"].min())
+    close=float(opening.iloc[-1]["Close"])
+    vol=float(opening["Volume"].fillna(0).sum())
+    typical=(opening["High"]+opening["Low"]+opening["Close"])/3
+    vol_series=opening["Volume"].fillna(0)
+    vwap=float((typical*vol_series).sum()/vol_series.sum()) if vol_series.sum()>0 else close
+    gap=((open_px-pc)/pc)*100
+    move=((close-pc)/pc)*100
+    rng=((high-low)/pc)*100
+    location=((close-low)/max(high-low,1e-9))*100
+    vwap_distance=abs((close-vwap)/vwap)*100 if vwap else 0
+    avg_open_vol=prior_opening_volume(frame,today)
+    vol_ratio=vol/avg_open_vol if avg_open_vol and avg_open_vol>0 else None
+    turnover=vol*gbx_to_gbp(close)
 
-    prior_avg_volume = average_prior_opening_volume(frame, today)
-    volume_ratio = volume / prior_avg_volume if prior_avg_volume and prior_avg_volume > 0 else None
-    pattern_text, pattern_points = first_hour_pattern(opening)
-
-    score = 0.0
-    checks: list[str] = []
-    blockers: list[str] = []
-
-    aligned_previous_close = close > previous_close if long_side else close < previous_close
-    if aligned_previous_close:
-        score += 20
-        checks.append("Direction agrees with the previous close")
-    else:
-        blockers.append("Opening hour contradicts the daily direction")
-
-    aligned_vwap = close > vwap if long_side else close < vwap
-    if aligned_vwap:
-        score += 20
-        checks.append("Price is on the correct side of VWAP")
-    else:
-        blockers.append("Price is on the wrong side of VWAP")
-
-    if abs(gap_pct) <= MAX_GAP_PCT:
-        score += 10
-        checks.append("Opening gap is within the permitted range")
-    else:
-        blockers.append(f"Opening gap {gap_pct:+.2f}% is excessive")
-
-    favourable_location = close_location >= 70 if long_side else close_location <= 30
-    if favourable_location:
-        score += 15
-        checks.append("09:00 close is near the favourable end of the opening range")
-    elif 40 <= close_location <= 60:
-        blockers.append("09:00 close is trapped near the middle of the opening range")
-
-    if volume_ratio is None:
-        score += 5
-        checks.append("Relative opening volume unavailable; neutral weighting used")
-    elif volume_ratio >= 1.0:
-        score += 15
-        checks.append(f"Opening volume is {volume_ratio:.2f}× its recent first-hour average")
-    elif volume_ratio >= MIN_OPENING_VOLUME_RATIO:
-        score += 8
-        checks.append(f"Opening volume is acceptable at {volume_ratio:.2f}× average")
-    else:
-        blockers.append(f"Opening volume is weak at {volume_ratio:.2f}× average")
-
-    if vwap_distance_pct <= MAX_VWAP_DISTANCE_PCT:
-        score += 10
-        checks.append("Price is not excessively extended from VWAP")
-    else:
-        blockers.append(f"Price is {vwap_distance_pct:.2f}% from VWAP and may be overextended")
-
-    pattern_agrees = (
-        long_side and ("bullish" in pattern_text.lower())
-    ) or (
-        (not long_side) and ("bearish" in pattern_text.lower())
+    # Latest completed five-minute close after 09:00 anchors the executable plan.
+    completed_cutoff = now.replace(second=0,microsecond=0) - dt.timedelta(
+        minutes=now.minute % 5
     )
-    if pattern_agrees:
-        score += pattern_points
-        checks.append(pattern_text)
-    elif "indecisive" in pattern_text.lower():
-        score += pattern_points
-        checks.append(pattern_text)
+    completed=today_frame[(today_frame.index.time>=dt.time(9,0))&(today_frame.index<completed_cutoff)]
+    purchase=float(completed.iloc[-1]["Close"]) if not completed.empty else close
+    purchase_time=completed.index[-1] if not completed.empty else opening.index[-1]
+
+    daily_stop=float(candidate.get("stop",low))
+    stop=max(low,daily_stop) if daily_stop < purchase else low
+    trigger=high*(1+ENTRY_BUFFER_PCT/100)
+    initial_risk=trigger-stop
+    max_purchase=trigger+MAX_ENTRY_EXTENSION_R*initial_risk if initial_risk>0 else trigger
+    risk=purchase-stop
+    target=purchase+TARGET_R*risk if risk>0 else purchase
+
+    checks=[]; reasons=[]; score=0.0
+    def good(condition: bool, points: float, yes: str, no: str):
+        nonlocal score
+        if condition:
+            score += points; checks.append(yes)
+        else:
+            reasons.append(no)
+
+    good(bars>=MIN_ACTIONABLE_BARS,10,"Enough five-minute bars for execution.","Too few opening-hour bars for a recommendation.")
+    good(close>pc,15,"The first hour finished above the previous close.","The first hour did not finish above the previous close.")
+    good(close>vwap,15,"Price finished above opening-hour VWAP.","Price finished below opening-hour VWAP.")
+    good(abs(gap)<=MAX_GAP_PCT,10,"The opening gap was controlled.",f"The opening gap of {gap:+.2f}% was excessive.")
+    good(MIN_RANGE_PCT<=rng<=MAX_RANGE_PCT,10,"The opening range was usable.",f"The opening range of {rng:.2f}% was not suitable.")
+    good(location>=65,10,"Price held in the upper part of the opening range.","Price did not hold in the upper part of the opening range.")
+    good(vol_ratio is not None and vol_ratio>=MIN_VOLUME_RATIO,10,
+         f"Opening volume was {vol_ratio:.2f}× normal." if vol_ratio is not None else "",
+         "Opening volume was unavailable or below the minimum.")
+    good(turnover>=MIN_OPENING_TURNOVER_GBP,10,
+         f"Opening turnover was about £{turnover:,.0f}.",
+         f"Opening turnover of about £{turnover:,.0f} was too low.")
+    good(vwap_distance<=MAX_VWAP_DISTANCE_PCT,5,"Price was not overextended from VWAP.",
+         f"Price was {vwap_distance:.2f}% from VWAP and overextended.")
+    good(risk>0 and purchase>stop,5,"The stop structure was valid.","The stop structure was invalid.")
+
+    hard_failure = (
+        bars < MIN_ACTIONABLE_BARS or close <= pc or close <= vwap or
+        abs(gap)>MAX_GAP_PCT or rng<MIN_RANGE_PCT or rng>MAX_RANGE_PCT or
+        turnover<MIN_OPENING_TURNOVER_GBP or risk<=0
+    )
+
+    if bars < MIN_ACTIONABLE_BARS:
+        status="DATA ONLY"
+        recommendation=(
+            f"No recommendation — only {bars} of 12 expected opening-hour bars were available. "
+            "The observations describe the partial price action only."
+        )
+    elif hard_failure:
+        status="REJECTED"
+        recommendation="No trade. One or more mandatory tradability checks failed."
+    elif purchase < trigger:
+        status="WAIT FOR BREAK"
+        recommendation=(
+            f"Not ready yet. Consider only if price breaks £{gbx_to_gbp(trigger):.2f}; "
+            f"do not pay above £{gbx_to_gbp(max_purchase):.2f}."
+        )
+    elif purchase > max_purchase:
+        status="DO NOT CHASE"
+        recommendation=(
+            f"No trade at the current price. It has moved beyond the maximum acceptable "
+            f"purchase price of £{gbx_to_gbp(max_purchase):.2f}."
+        )
+    elif score >= MIN_ACTIONABLE_SCORE:
+        status="ACTIONABLE"
+        recommendation=(
+            f"Executable long setup at approximately £{gbx_to_gbp(purchase):.2f}, "
+            f"subject to checking the live broker quote and spread."
+        )
     else:
-        blockers.append(pattern_text + " opposes the daily direction")
+        status="REJECTED"
+        recommendation="No trade. The setup passed the hard filters but was not strong enough overall."
 
-    after_nine = today_frame[today_frame.index.time >= dt.time(9, 0)]
-    reference_entry = float(after_nine.iloc[0]["Open"]) if not after_nine.empty else close
-    daily_stop = float(candidate.get("stop", low if long_side else high))
+    risk_budget=CAPITAL*RISK_PCT/100
+    risk_gbp=gbx_to_gbp(risk) if risk>0 else 0
+    purchase_gbp=gbx_to_gbp(purchase)
+    shares=max(0,min(
+        math.floor(risk_budget/risk_gbp) if risk_gbp>0 else 0,
+        math.floor(CAPITAL/purchase_gbp) if purchase_gbp>0 else 0
+    ))
 
-    if long_side:
-        trigger = high * (1 + ENTRY_BUFFER_PCT / 100)
-        stop = max(low, daily_stop) if daily_stop < reference_entry else low
-        risk = trigger - stop
-        target = trigger + TARGET_R * risk
-        invalidated = reference_entry <= stop
-    else:
-        trigger = low * (1 - ENTRY_BUFFER_PCT / 100)
-        stop = min(high, daily_stop) if daily_stop > reference_entry else high
-        risk = stop - trigger
-        target = trigger - TARGET_R * risk
-        invalidated = reference_entry >= stop
-
-    if invalidated or risk <= 0 or not all(finite_number(v) for v in [trigger, stop, target]):
-        blockers.append("The calculated entry/stop structure is invalid")
-
-    risk_budget = CAPITAL * RISK_PCT / 100
-    shares = 0
-    position_value = 0.0
-    planned_risk = 0.0
-    if risk > 0:
-        trigger_gbp = scr.gbx_to_gbp(trigger)
-        risk_gbp = scr.gbx_to_gbp(risk)
-        if trigger_gbp > 0 and risk_gbp > 0:
-            shares = max(0, min(math.floor(risk_budget / risk_gbp), math.floor(CAPITAL / trigger_gbp)))
-            position_value = shares * trigger_gbp
-            planned_risk = shares * risk_gbp
-    if shares <= 0:
-        blockers.append("Capital/risk settings do not support one whole share")
-
-    hard_blockers = [
-        text for text in blockers
-        if text.startswith("Opening hour contradicts")
-        or text.startswith("Price is on the wrong side")
-        or text.startswith("Opening gap")
-        or text.startswith("The calculated")
-    ]
-
-    if not hard_blockers and score >= 80:
-        status = "STRONG SETUP"
-        recommendation = f"Consider only on a break of the opening range {'high' if long_side else 'low'}; do not chase above/below the trigger."
-    elif not hard_blockers and score >= MIN_INTRADAY_SCORE:
-        status = "WATCH"
-        recommendation = f"Borderline day-trade setup. Require a clean break and hold beyond the trigger before considering entry."
-    else:
-        status = "NO TRADE"
-        recommendation = "Opening-hour evidence is not strong enough for the proposed day-trade plan."
-
-    result.update({
-        "status": status,
-        "recommendation": recommendation,
-        "intraday_score": min(100.0, score),
-        "checks": checks,
-        "blockers": blockers,
-        "previous_close_gbx": previous_close,
-        "open_gbx": open_price,
-        "gap_pct": gap_pct,
-        "move_pct": move_pct,
-        "range_pct": range_pct,
-        "hour_high_gbx": high,
-        "hour_low_gbx": low,
-        "hour_close_gbx": close,
-        "close_location_pct": close_location,
-        "vwap_gbx": vwap,
-        "vwap_distance_pct": vwap_distance_pct,
-        "hour_volume": int(volume),
-        "volume_ratio": volume_ratio,
-        "opening_pattern": pattern_text,
-        "entry_trigger_gbx": trigger,
-        "stop_gbx": stop,
-        "target_gbx": target,
-        "shares": shares,
-        "position_value_gbp": position_value,
-        "planned_risk_gbp": planned_risk,
+    base.update({
+        "status":status,"recommendation":recommendation,"score":min(score,100),
+        "checks":checks,"reasons":reasons,"previous_close":pc,"gap_pct":gap,
+        "move_pct":move,"range_pct":rng,"close":close,"vwap":vwap,
+        "location_pct":location,"volume_ratio":vol_ratio,"turnover_gbp":turnover,
+        "purchase":purchase,"purchase_time":purchase_time,"trigger":trigger,
+        "max_purchase":max_purchase,"stop":stop,"target":target,"risk":risk,
+        "shares":shares,"position_value":shares*purchase_gbp,
+        "planned_risk":shares*risk_gbp,
     })
-    return result
+    return base
 
+def money(value: Any) -> str:
+    return f"£{gbx_to_gbp(float(value)):.2f}" if finite(value) else "—"
 
-def money_gbx(value: Any) -> str:
-    return f"£{scr.gbx_to_gbp(float(value)):.2f}" if finite_number(value) else "—"
-
-
-def render_result(item: dict[str, Any]) -> str:
-    status = item["status"]
-    colour = BULL if status == "STRONG SETUP" else (BRASS if status == "WATCH" else MUTED)
-    checks = "".join(f"<li>{html_lib.escape(text)}</li>" for text in item.get("checks", []))
-    blockers = "".join(f"<li>{html_lib.escape(text)}</li>" for text in item.get("blockers", []))
-    volume_ratio = item.get("volume_ratio")
-    volume_text = f"{volume_ratio:.2f}×" if finite_number(volume_ratio) else "—"
-
+def card(item: dict[str, Any], nap: bool=False) -> str:
+    label=("NAP — " if nap else "")+str(item["status"])
+    colour=BULL if item["status"]=="ACTIONABLE" else (BRASS if item["status"]=="WAIT FOR BREAK" else MUTED)
+    checks="".join(f"<li>{html_lib.escape(x)}</li>" for x in item.get("checks",[])) or "<li>None</li>"
+    reasons="".join(f"<li>{html_lib.escape(x)}</li>" for x in item.get("reasons",[])) or "<li>None</li>"
+    vr=item.get("volume_ratio")
+    vr_text=f"{vr:.2f}×" if finite(vr) else "—"
     return f"""
-    <section class="pick">
-      <div class="pick-head">
-        <div>
-          <strong class="epic">{html_lib.escape(str(item['epic']))}</strong>
-          <span class="name">{html_lib.escape(str(item['name']))}</span>
-          <div class="pattern">{html_lib.escape(str(item['direction']))} · {html_lib.escape(str(item['daily_pattern']))} · daily {item['daily_score']:.1f}/100</div>
-        </div>
-        <div class="score"><span style="color:{colour}">{html_lib.escape(status)}</span><strong>{item['intraday_score']:.0f}/100</strong></div>
-      </div>
-      <p class="recommendation">{html_lib.escape(item['recommendation'])}</p>
-      <div class="metrics">
-        <div><span>Previous close</span><strong>{money_gbx(item.get('previous_close_gbx'))}</strong></div>
-        <div><span>Opening gap</span><strong>{item.get('gap_pct', 0):+.2f}%</strong></div>
-        <div><span>09:00 move</span><strong>{item.get('move_pct', 0):+.2f}%</strong></div>
-        <div><span>Opening range</span><strong>{item.get('range_pct', 0):.2f}%</strong></div>
-        <div><span>09:00 close / VWAP</span><strong>{money_gbx(item.get('hour_close_gbx'))} / {money_gbx(item.get('vwap_gbx'))}</strong></div>
-        <div><span>Close in range</span><strong>{item.get('close_location_pct', 0):.0f}%</strong></div>
-        <div><span>Relative volume</span><strong>{volume_text}</strong></div>
-        <div><span>Opening pattern</span><strong>{html_lib.escape(item.get('opening_pattern', '—'))}</strong></div>
-        <div><span>Entry trigger</span><strong>{money_gbx(item.get('entry_trigger_gbx'))}</strong></div>
-        <div><span>Stop / target</span><strong>{money_gbx(item.get('stop_gbx'))} / {money_gbx(item.get('target_gbx'))}</strong></div>
-        <div><span>Indicative size</span><strong>{item.get('shares', 0)} shares</strong></div>
-        <div><span>Value / planned risk</span><strong>£{item.get('position_value_gbp', 0):.2f} / £{item.get('planned_risk_gbp', 0):.2f}</strong></div>
-      </div>
-      <details><summary>Assessment details</summary>
-        <div class="detail-grid"><div><h3>Positive checks</h3><ul>{checks or '<li>None</li>'}</ul></div><div><h3>Warnings</h3><ul>{blockers or '<li>None</li>'}</ul></div></div>
-      </details>
-    </section>"""
+<section class="pick">
+<div class="pick-head"><div><strong class="epic">{html_lib.escape(str(item['epic']))}</strong>
+<span class="name">{html_lib.escape(str(item['name']))}</span>
+<div class="pattern">{html_lib.escape(str(item.get('daily_pattern','')))} · daily pool {item['daily_score']:.0f}/100</div></div>
+<div class="score"><span style="color:{colour}">{html_lib.escape(label)}</span><strong>{item['score']:.0f}/100</strong></div></div>
+<p class="recommendation" data-original="{html_lib.escape(item['recommendation'],quote=True)}">{html_lib.escape(item['recommendation'])}</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>{money(item.get('purchase'))} at {item.get('purchase_time').strftime('%H:%M') if item.get('purchase_time') else '—'}</strong></div>
+<div><span>Maximum purchase</span><strong>{money(item.get('max_purchase'))}</strong></div>
+<div><span>Stop / 2R target</span><strong>{money(item.get('stop'))} / {money(item.get('target'))}</strong></div>
+<div><span>Indicative size</span><strong>{item.get('shares',0)} shares</strong></div>
+<div><span>Opening gap</span><strong>{item.get('gap_pct',0):+.2f}%</strong></div>
+<div><span>Opening range</span><strong>{item.get('range_pct',0):.2f}%</strong></div>
+<div><span>Close / VWAP</span><strong>{money(item.get('close'))} / {money(item.get('vwap'))}</strong></div>
+<div><span>Relative volume / turnover</span><strong>{vr_text} / £{item.get('turnover_gbp',0):,.0f}</strong></div>
+</div>
+<p class="story">{html_lib.escape(item.get('story',''))}</p>
+<details><summary>Why</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul>{checks}</ul></div><div><h3>Failed or cautions</h3><ul>{reasons}</ul></div>
+</div></details></section>"""
 
+def rejected_row(item: dict[str, Any]) -> str:
+    reason="; ".join(item.get("reasons",[])[:2]) or item.get("recommendation","No trade")
+    return f"<li><strong>{html_lib.escape(str(item['epic']))}</strong> — {html_lib.escape(str(item['status']))}: {html_lib.escape(reason)}</li>"
 
-def build_live_html(results: list[dict[str, Any]], generated_at: dt.datetime) -> str:
-    from string import Template
-
-    status_priority = {"STRONG SETUP": 3, "WATCH": 2, "INSUFFICIENT DATA": 1, "NO TRADE": 0}
-    ranked_all = sorted(
-        results,
-        key=lambda row: (
-            status_priority.get(str(row.get("status")), 0),
-            float(row.get("intraday_score", 0)),
-        ),
+def build_html(results: list[dict[str, Any]], generated: dt.datetime) -> str:
+    actionable = sorted(
+        [row for row in results if row["status"] == "ACTIONABLE"],
+        key=lambda row: row["score"],
         reverse=True,
+    )[:MAX_ACTIONABLE_TRADES]
+
+    rejected = [row for row in results if row not in actionable]
+    rejected.sort(key=lambda row: row["score"], reverse=True)
+
+    nap_epic = actionable[0]["epic"] if actionable else None
+    cards = "".join(
+        card(row, nap=(row["epic"] == nap_epic))
+        for row in actionable
     )
-    ranked = ranked_all[:TOP_N]
-    actionable = sum(row["status"] in {"STRONG SETUP", "WATCH"} for row in ranked_all)
-    assessed = len(ranked_all)
-    expiry_iso = dt.datetime.combine(generated_at.date(), dt.time(10, 0), tzinfo=LONDON).isoformat()
-    cards = "".join(render_result(item) for item in ranked)
-    template = Template("""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FTSE opening-hour day-trade review</title>
+
+    if actionable:
+        decision = (
+            f"{len(actionable)} executable long trade"
+            f"{'s' if len(actionable) != 1 else ''} passed every mandatory check. "
+            "The highest-ranked trade is marked NAP."
+        )
+    else:
+        decision = (
+            "NO TRADE TODAY — none of the FTSE 350 candidates passed every "
+            "mandatory tradability and execution check."
+        )
+
+    rejected_html = "".join(rejected_row(row) for row in rejected) or "<li>None</li>"
+    expiry = dt.datetime.combine(
+        generated.date(), dt.time(10, 0), tzinfo=LONDON
+    ).isoformat()
+
+    template = Template("""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE 350 intraday trades</title>
 <style>
-:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}.wrap{max-width:900px;margin:auto;padding:22px 14px 56px}a{color:$BRASS}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid $HAIRLINE;padding-bottom:16px}h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:$SALMON;font-size:12px;text-transform:uppercase;letter-spacing:.09em}.time,.pattern,.name,.footer{color:$MUTED;font-size:12px}.summary,.pick{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:15px;margin:14px 0}.summary strong{color:$BRASS}.expiry{color:$SALMON;font-weight:700}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:$INK;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}.metrics span{display:block;color:$MUTED;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:$BRASS;font-size:13px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:$MUTED;font-size:12px;line-height:1.5}.expired{display:none;background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:22px;margin-top:18px}.footer{line-height:1.6;border-top:1px solid $HAIRLINE;padding-top:14px;margin-top:20px}@media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}
+.wrap{max-width:920px;margin:auto;padding:22px 14px 56px}a{color:$BRASS}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid $HAIRLINE;padding-bottom:16px}
+h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:$SALMON;font-size:12px;text-transform:uppercase;letter-spacing:.09em}
+.time,.pattern,.name,.footer,.story{color:$MUTED;font-size:12px}.decision,.pick,.rejected,.expired{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:15px;margin:14px 0}
+.decision strong{color:$BRASS}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}
+.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:$INK;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}
+.metrics span{display:block;color:$MUTED;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:$BRASS;font-size:13px}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:$MUTED;font-size:12px;line-height:1.5}
+.expired{display:none;border-color:$SALMON}.expired h2{color:$SALMON;margin-top:0}.footer{line-height:1.6;border-top:1px solid $HAIRLINE;padding-top:14px;margin-top:20px}
+@media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
 </style></head><body><main class="wrap">
-<div class="header"><div><div class="kicker">FTSE · opening-hour decision support</div><h1>09:00 day-trade review</h1></div><div class="time">$DATE<br>$TIME</div></div>
-<div id="live-content"><div class="summary"><strong>$ACTIONABLE actionable long setup(s) from $ASSESSED candidates assessed; showing the best $TOTAL.</strong> These are conditional setups, not market orders. <span class="expiry">All recommendations expire automatically at 10:00 London time.</span> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>$CARDS</div>
-<div id="expired-content" class="expired"><h2>Today’s recommendations have expired</h2><p>The 10:00 London cutoff has passed. Do not use the earlier opening-hour levels as current recommendations.</p><p><a href="index.html">Return to the daily watchlist</a></p></div>
-<p class="footer">Method: daily-screen candidates are reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. Entry levels are conditional opening-range triggers. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
+<div class="header"><div><div class="kicker">FTSE 350 ex trusts · executable long trades</div><h1>Opening-hour intraday decisions</h1></div><div class="time">$DATE<br>$TIME</div></div>
+<div class="decision"><strong>$DECISION</strong> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>
+<div id="expired-content" class="expired"><h2>Past the 10:00 cutoff</h2><p>The trades below are retained for review only. Do not use their purchase, stop or target levels now.</p></div>
+<div id="live-content">$CARDS
+<details class="rejected"><summary>Other candidates assessed but not recommended</summary><ul>$REJECTED</ul></details></div>
+<p class="footer">Only trades that pass every mandatory check are shown as recommendations. The engine requires adequate five-minute data, controlled gap and range, price above the previous close and VWAP, sufficient liquidity and turnover, a valid stop, and a current price within the permitted entry zone. It shows up to five trades and never fills the list with weaker names.</p>
 </main><script>
-(function(){const expiry=new Date('$EXPIRY');const live=document.getElementById('live-content');const expired=document.getElementById('expired-content');function enforce(){if(new Date()>=expiry){live.style.display='none';expired.style.display='block';}}enforce();setInterval(enforce,30000);})();
+(function(){const expiry=new Date('$EXPIRY');const expired=document.getElementById('expired-content');
+function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){const original=el.dataset.original||el.textContent;el.dataset.original=original;el.textContent='PAST 10:00 — Do not follow this recommendation now. Original assessment: '+original;});}}
+enforce();setInterval(enforce,30000);})();
 </script></body></html>""")
+
     return template.substitute(
-        INK=INK, PAPER=PAPER, BRASS=BRASS, HAIRLINE=HAIRLINE, SALMON=SALMON,
-        MUTED=MUTED, PANEL=PANEL, DATE=generated_at.strftime("%a %d %b %Y"),
-        TIME=generated_at.strftime("%H:%M %Z"), ACTIONABLE=actionable,
-        TOTAL=len(ranked), ASSESSED=assessed, CARDS=cards, EXPIRY=expiry_iso,
-    )
-
-
-def build_expired_html(now: dt.datetime) -> str:
-    from string import Template
-
-    template = Template("""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE intraday recommendations expired</title><style>:root{color-scheme:dark}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}main{max-width:720px;margin:auto;padding:44px 18px}section{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:24px}h1{margin-top:0}p{line-height:1.6;color:$MUTED}a{color:$BRASS}.time{font-size:12px;color:$SALMON}</style></head><body><main><section><div class="time">$STAMP</div><h1>Today’s recommendations have expired</h1><p>The 10:00 London cutoff has passed. The opening-hour setups have been removed because they are no longer intended for execution.</p><p>The page will be rebuilt after tomorrow’s completed opening hour.</p><p><a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></p></section></main></body></html>""")
-    return template.substitute(
-        INK=INK, PAPER=PAPER, PANEL=PANEL, HAIRLINE=HAIRLINE, MUTED=MUTED,
-        BRASS=BRASS, SALMON=SALMON, STAMP=now.strftime("%a %d %b %Y · %H:%M %Z"),
+        INK=INK, PAPER=PAPER, BRASS=BRASS, HAIRLINE=HAIRLINE,
+        SALMON=SALMON, MUTED=MUTED, PANEL=PANEL,
+        DATE=generated.strftime("%a %d %b %Y"),
+        TIME=generated.strftime("%H:%M %Z"),
+        DECISION=html_lib.escape(decision),
+        CARDS=cards or (
+            "<section class='pick'><strong>NO TRADE TODAY</strong>"
+            "<p>No candidate passed all mandatory checks.</p></section>"
+        ),
+        REJECTED=rejected_html,
+        EXPIRY=expiry,
     )
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["auto", "analyse", "expire"], default="auto")
-    parser.add_argument("--force", action="store_true", help="Ignore London time-window checks")
-    return parser.parse_args()
-
+    p=argparse.ArgumentParser()
+    p.add_argument("--mode",choices=["auto","analyse","expire"],default="auto")
+    p.add_argument("--force",action="store_true")
+    return p.parse_args()
 
 def main() -> int:
-    args = parse_args()
-    now = london_now()
-    mode = auto_mode(now) if args.mode == "auto" else args.mode
-    enforce_window(now, mode, args.force)
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-    if mode == "expire":
-        OUTPUT_PATH.write_text(build_expired_html(now), encoding="utf-8")
-        print(f"Expired report written to {OUTPUT_PATH}")
+    args=parse_args(); now=now_london()
+    OUTPUT_PATH.parent.mkdir(parents=True,exist_ok=True)
+    mode=("expire" if now.hour>=10 else "analyse") if args.mode=="auto" else args.mode
+    if mode=="expire":
+        print("Retaining the existing intraday page; browser-side logic marks it expired.")
         return 0
-
-    candidates = get_daily_candidates()
-    long_candidates = [
-        candidate for candidate in candidates
-        if str(candidate.get("direction", "")).lower() == "long"
-    ]
-    if not long_candidates:
-        raise RuntimeError("The saved daily pool contains no long candidates for intraday review.")
-    results = [assess_candidate(candidate, now) for candidate in long_candidates]
-    OUTPUT_PATH.write_text(build_live_html(results, now), encoding="utf-8")
-    print(f"Day-trade report written to {OUTPUT_PATH}")
-    for item in sorted(results, key=lambda row: row.get("intraday_score", 0), reverse=True):
-        print(f"{item['epic']:<7} {item['status']:<12} {item['intraday_score']:>5.1f}  {item['recommendation']}")
+    candidates=load_pool()
+    print(f"Assessing {len(candidates)} liquid long candidates from the daily pool...")
+    results=[assess(c,now) for c in candidates]
+    OUTPUT_PATH.write_text(build_html(results,now),encoding="utf-8")
+    print(f"Wrote {OUTPUT_PATH}")
+    for r in sorted(results,key=lambda x:x["score"],reverse=True):
+        print(f"{r['epic']:<7} {r['status']:<15} {r['score']:>5.1f} {r['recommendation']}")
     return 0
 
-
-if __name__ == "__main__":
+if __name__=="__main__":
     sys.exit(main())
