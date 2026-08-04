@@ -1,3 +1,4 @@
+# FILE_VERSION: INTRADAY_WIDER_LONG_POOL_2026_08_04
 """
 FTSE opening-hour day-trade assessment.
 
@@ -51,6 +52,7 @@ UTC = dt.timezone.utc
 CAPITAL = float(os.environ.get("CAPITAL", "5000"))
 RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
 TOP_N = int(os.environ.get("TOP_N", "5"))
+CANDIDATE_POOL_N = int(os.environ.get("CANDIDATE_POOL_N", "20"))
 MAX_GAP_PCT = float(os.environ.get("MAX_GAP_PCT", "2.0"))
 TARGET_R = float(os.environ.get("TARGET_R", "2.0"))
 MIN_INTRADAY_SCORE = float(os.environ.get("MIN_INTRADAY_SCORE", "65"))
@@ -462,8 +464,18 @@ def render_result(item: dict[str, Any]) -> str:
 def build_live_html(results: list[dict[str, Any]], generated_at: dt.datetime) -> str:
     from string import Template
 
-    ranked = sorted(results, key=lambda row: float(row.get("intraday_score", 0)), reverse=True)
-    actionable = sum(row["status"] in {"STRONG SETUP", "WATCH"} for row in ranked)
+    status_priority = {"STRONG SETUP": 3, "WATCH": 2, "INSUFFICIENT DATA": 1, "NO TRADE": 0}
+    ranked_all = sorted(
+        results,
+        key=lambda row: (
+            status_priority.get(str(row.get("status")), 0),
+            float(row.get("intraday_score", 0)),
+        ),
+        reverse=True,
+    )
+    ranked = ranked_all[:TOP_N]
+    actionable = sum(row["status"] in {"STRONG SETUP", "WATCH"} for row in ranked_all)
+    assessed = len(ranked_all)
     expiry_iso = dt.datetime.combine(generated_at.date(), dt.time(10, 0), tzinfo=LONDON).isoformat()
     cards = "".join(render_result(item) for item in ranked)
     template = Template("""<!doctype html>
@@ -473,7 +485,7 @@ def build_live_html(results: list[dict[str, Any]], generated_at: dt.datetime) ->
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}.wrap{max-width:900px;margin:auto;padding:22px 14px 56px}a{color:$BRASS}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid $HAIRLINE;padding-bottom:16px}h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:$SALMON;font-size:12px;text-transform:uppercase;letter-spacing:.09em}.time,.pattern,.name,.footer{color:$MUTED;font-size:12px}.summary,.pick{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:15px;margin:14px 0}.summary strong{color:$BRASS}.expiry{color:$SALMON;font-weight:700}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:$INK;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}.metrics span{display:block;color:$MUTED;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:$BRASS;font-size:13px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:$MUTED;font-size:12px;line-height:1.5}.expired{display:none;background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:22px;margin-top:18px}.footer{line-height:1.6;border-top:1px solid $HAIRLINE;padding-top:14px;margin-top:20px}@media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
 </style></head><body><main class="wrap">
 <div class="header"><div><div class="kicker">FTSE · opening-hour decision support</div><h1>09:00 day-trade review</h1></div><div class="time">$DATE<br>$TIME</div></div>
-<div id="live-content"><div class="summary"><strong>$ACTIONABLE of $TOTAL candidates remain worth reviewing.</strong> These are conditional setups, not market orders. <span class="expiry">All recommendations expire automatically at 10:00 London time.</span> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>$CARDS</div>
+<div id="live-content"><div class="summary"><strong>$ACTIONABLE actionable long setup(s) from $ASSESSED candidates assessed; showing the best $TOTAL.</strong> These are conditional setups, not market orders. <span class="expiry">All recommendations expire automatically at 10:00 London time.</span> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>$CARDS</div>
 <div id="expired-content" class="expired"><h2>Today’s recommendations have expired</h2><p>The 10:00 London cutoff has passed. Do not use the earlier opening-hour levels as current recommendations.</p><p><a href="index.html">Return to the daily watchlist</a></p></div>
 <p class="footer">Method: daily-screen candidates are reassessed using completed 08:00–09:00 five-minute bars, previous close, opening gap, VWAP, opening-range position, relative first-hour volume and opening-hour candle structure. Entry levels are conditional opening-range triggers. Check live broker prices, spreads and news before taking any action. This is decision support, not financial advice.</p>
 </main><script>
@@ -483,7 +495,7 @@ def build_live_html(results: list[dict[str, Any]], generated_at: dt.datetime) ->
         INK=INK, PAPER=PAPER, BRASS=BRASS, HAIRLINE=HAIRLINE, SALMON=SALMON,
         MUTED=MUTED, PANEL=PANEL, DATE=generated_at.strftime("%a %d %b %Y"),
         TIME=generated_at.strftime("%H:%M %Z"), ACTIONABLE=actionable,
-        TOTAL=len(ranked), CARDS=cards, EXPIRY=expiry_iso,
+        TOTAL=len(ranked), ASSESSED=assessed, CARDS=cards, EXPIRY=expiry_iso,
     )
 
 
@@ -517,7 +529,13 @@ def main() -> int:
         return 0
 
     candidates = get_daily_candidates()
-    results = [assess_candidate(candidate, now) for candidate in candidates]
+    long_candidates = [
+        candidate for candidate in candidates
+        if str(candidate.get("direction", "")).lower() == "long"
+    ]
+    if not long_candidates:
+        raise RuntimeError("The saved daily pool contains no long candidates for intraday review.")
+    results = [assess_candidate(candidate, now) for candidate in long_candidates]
     OUTPUT_PATH.write_text(build_live_html(results, now), encoding="utf-8")
     print(f"Day-trade report written to {OUTPUT_PATH}")
     for item in sorted(results, key=lambda row: row.get("intraday_score", 0), reverse=True):
