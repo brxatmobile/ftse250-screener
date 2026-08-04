@@ -1,4 +1,4 @@
-# FILE_VERSION: FTSE350_UP_TO_FIVE_ACTIONABLE_LONGS_2026_08_04
+# FILE_VERSION: FTSE350_BLANK_ENV_SAFE_2026_08_04
 from __future__ import annotations
 
 import argparse
@@ -21,21 +21,47 @@ import yfinance as yf
 LONDON = ZoneInfo("Europe/London")
 UTC = dt.timezone.utc
 
-CAPITAL = float(os.environ.get("CAPITAL", "5000"))
-RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
-POOL_N = int(os.environ.get("CANDIDATE_POOL_N", "60"))
-TARGET_R = float(os.environ.get("TARGET_R", "2"))
-MAX_GAP_PCT = float(os.environ.get("MAX_GAP_PCT", "2.5"))
-MAX_RANGE_PCT = float(os.environ.get("MAX_OPENING_RANGE_PCT", "5.0"))
-MIN_RANGE_PCT = float(os.environ.get("MIN_OPENING_RANGE_PCT", "0.35"))
-MIN_VOLUME_RATIO = float(os.environ.get("MIN_OPENING_VOLUME_RATIO", "0.80"))
-MIN_OPENING_TURNOVER_GBP = float(os.environ.get("MIN_OPENING_TURNOVER_GBP", "100000"))
-MAX_VWAP_DISTANCE_PCT = float(os.environ.get("MAX_VWAP_DISTANCE_PCT", "1.25"))
-ENTRY_BUFFER_PCT = float(os.environ.get("ENTRY_BUFFER_PCT", "0.05"))
-MAX_ENTRY_EXTENSION_R = float(os.environ.get("MAX_ENTRY_EXTENSION_R", "0.25"))
-MIN_ACTIONABLE_BARS = int(os.environ.get("MIN_ACTIONABLE_BARS", "10"))
-MAX_ACTIONABLE_TRADES = int(os.environ.get("MAX_ACTIONABLE_TRADES", "5"))
-MIN_ACTIONABLE_SCORE = float(os.environ.get("MIN_ACTIONABLE_SCORE", "72"))
+
+def env_float(name: str, default: float) -> float:
+    """Read a float environment variable, treating blank values as unset."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return float(default)
+    try:
+        return float(str(raw).strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Environment variable {name} must be numeric; received {raw!r}"
+        ) from exc
+
+
+def env_int(name: str, default: int) -> int:
+    """Read an integer environment variable, treating blank values as unset."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return int(default)
+    try:
+        return int(str(raw).strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Environment variable {name} must be an integer; received {raw!r}"
+        ) from exc
+
+CAPITAL = env_float("CAPITAL", 5000)
+RISK_PCT = env_float("RISK_PCT", 1)
+POOL_N = env_int("CANDIDATE_POOL_N", 60)
+TARGET_R = env_float("TARGET_R", 2)
+MAX_GAP_PCT = env_float("MAX_GAP_PCT", 2.5)
+MAX_RANGE_PCT = env_float("MAX_OPENING_RANGE_PCT", 5.0)
+MIN_RANGE_PCT = env_float("MIN_OPENING_RANGE_PCT", 0.35)
+MIN_VOLUME_RATIO = env_float("MIN_OPENING_VOLUME_RATIO", 0.80)
+MIN_OPENING_TURNOVER_GBP = env_float("MIN_OPENING_TURNOVER_GBP", 100000)
+MAX_VWAP_DISTANCE_PCT = env_float("MAX_VWAP_DISTANCE_PCT", 1.25)
+ENTRY_BUFFER_PCT = env_float("ENTRY_BUFFER_PCT", 0.05)
+MAX_ENTRY_EXTENSION_R = env_float("MAX_ENTRY_EXTENSION_R", 0.25)
+MIN_ACTIONABLE_BARS = env_int("MIN_ACTIONABLE_BARS", 10)
+MAX_ACTIONABLE_TRADES = env_int("MAX_ACTIONABLE_TRADES", 5)
+MIN_ACTIONABLE_SCORE = env_float("MIN_ACTIONABLE_SCORE", 72)
 
 ROOT = Path(__file__).resolve().parent
 DAILY_INDEX_PATH = ROOT / "docs" / "index.html"
