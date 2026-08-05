@@ -1,4 +1,4 @@
-# FILE_VERSION: FTSE350_BLANK_ENV_SAFE_2026_08_04
+# FILE_VERSION: FTSE350_ACTIONABLE_AND_TRIGGER_RECOMMENDATIONS_2026_08_05
 from __future__ import annotations
 
 import argparse
@@ -341,31 +341,53 @@ def rejected_row(item: dict[str, Any]) -> str:
     return f"<li><strong>{html_lib.escape(str(item['epic']))}</strong> — {html_lib.escape(str(item['status']))}: {html_lib.escape(reason)}</li>"
 
 def build_html(results: list[dict[str, Any]], generated: dt.datetime) -> str:
-    actionable = sorted(
-        [row for row in results if row["status"] == "ACTIONABLE"],
-        key=lambda row: row["score"],
+    recommended = sorted(
+        [
+            row for row in results
+            if row["status"] in {"ACTIONABLE", "WAIT FOR BREAK"}
+            and row["score"] >= MIN_ACTIONABLE_SCORE
+        ],
+        key=lambda row: (
+            1 if row["status"] == "ACTIONABLE" else 0,
+            row["score"],
+        ),
         reverse=True,
     )[:MAX_ACTIONABLE_TRADES]
 
-    rejected = [row for row in results if row not in actionable]
+    rejected = [row for row in results if row not in recommended]
     rejected.sort(key=lambda row: row["score"], reverse=True)
 
-    nap_epic = actionable[0]["epic"] if actionable else None
+    actionable = [row for row in recommended if row["status"] == "ACTIONABLE"]
+    waiting = [row for row in recommended if row["status"] == "WAIT FOR BREAK"]
+    nap_epic = recommended[0]["epic"] if recommended else None
+
     cards = "".join(
         card(row, nap=(row["epic"] == nap_epic))
-        for row in actionable
+        for row in recommended
     )
 
-    if actionable:
+    if actionable and waiting:
+        decision = (
+            f"{len(actionable)} actionable now and {len(waiting)} valid setup"
+            f"{'s' if len(waiting) != 1 else ''} waiting for a trigger. "
+            "The highest-ranked plan is marked NAP."
+        )
+    elif actionable:
         decision = (
             f"{len(actionable)} executable long trade"
             f"{'s' if len(actionable) != 1 else ''} passed every mandatory check. "
             "The highest-ranked trade is marked NAP."
         )
+    elif waiting:
+        decision = (
+            f"{len(waiting)} valid long setup"
+            f"{'s are' if len(waiting) != 1 else ' is'} waiting for a breakout. "
+            "Do not buy before the displayed trigger."
+        )
     else:
         decision = (
-            "NO TRADE TODAY — none of the FTSE 350 candidates passed every "
-            "mandatory tradability and execution check."
+            "NO TRADE TODAY — no FTSE 350 candidate produced either an actionable "
+            "entry or a valid trigger-based setup."
         )
 
     rejected_html = "".join(rejected_row(row) for row in rejected) or "<li>None</li>"
@@ -388,12 +410,12 @@ h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:
 .expired{display:none;border-color:$SALMON}.expired h2{color:$SALMON;margin-top:0}.footer{line-height:1.6;border-top:1px solid $HAIRLINE;padding-top:14px;margin-top:20px}
 @media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
 </style></head><body><main class="wrap">
-<div class="header"><div><div class="kicker">FTSE 350 ex trusts · executable long trades</div><h1>Opening-hour intraday decisions</h1></div><div class="time">$DATE<br>$TIME</div></div>
+<div class="header"><div><div class="kicker">FTSE 350 ex trusts · actionable and trigger-based longs</div><h1>Opening-hour intraday decisions</h1></div><div class="time">$DATE<br>$TIME</div></div>
 <div class="decision"><strong>$DECISION</strong> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>
-<div id="expired-content" class="expired"><h2>Past the 10:00 cutoff</h2><p>The trades below are retained for review only. Do not use their purchase, stop or target levels now.</p></div>
+<div id="expired-content" class="expired"><h2>Past the 10:00 cutoff</h2><p>The trade plans below are retained for review only. Do not use their purchase, trigger, stop or target levels now.</p></div>
 <div id="live-content">$CARDS
 <details class="rejected"><summary>Other candidates assessed but not recommended</summary><ul>$REJECTED</ul></details></div>
-<p class="footer">Only trades that pass every mandatory check are shown as recommendations. The engine requires adequate five-minute data, controlled gap and range, price above the previous close and VWAP, sufficient liquidity and turnover, a valid stop, and a current price within the permitted entry zone. It shows up to five trades and never fills the list with weaker names.</p>
+<p class="footer">The page shows up to five valid long trade plans. ACTIONABLE means the trigger has broken and the latest completed five-minute price remains acceptable. WAIT FOR BREAK is a valid conditional recommendation, but it must not be bought before the displayed trigger.</p>
 </main><script>
 (function(){const expiry=new Date('$EXPIRY');const expired=document.getElementById('expired-content');
 function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){const original=el.dataset.original||el.textContent;el.dataset.original=original;el.textContent='PAST 10:00 — Do not follow this recommendation now. Original assessment: '+original;});}}
@@ -408,7 +430,7 @@ enforce();setInterval(enforce,30000);})();
         DECISION=html_lib.escape(decision),
         CARDS=cards or (
             "<section class='pick'><strong>NO TRADE TODAY</strong>"
-            "<p>No candidate passed all mandatory checks.</p></section>"
+            "<p>No candidate produced a valid actionable or trigger-based plan.</p></section>"
         ),
         REJECTED=rejected_html,
         EXPIRY=expiry,
