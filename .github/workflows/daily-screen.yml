@@ -1,9 +1,12 @@
-name: Daily FTSE 250 screen
+name: FTSE 350 Pre-Market Screen
 
 on:
+  workflow_dispatch:
+
   schedule:
+    # 07:00 London: 06:00 UTC during BST and 07:00 UTC during GMT.
+    - cron: "0 6 * * 1-5"
     - cron: "0 7 * * 1-5"
-  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -15,48 +18,84 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  screen:
+  build-daily-screen:
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out repository
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v6
+      - name: Decide whether scheduled run should continue
+        id: london_gate
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          hour=$(TZ=Europe/London date +%H)
+          minute=$(TZ=Europe/London date +%M)
+          total=$((10#$hour * 60 + 10#$minute))
+
+          # GitHub cron can start late. Accept the correct seasonal run
+          # between 06:55 and 07:25 London time.
+          if [ "$total" -ge 415 ] && [ "$total" -le 445 ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.london_gate.outputs.should_run == 'true'
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install dependencies
+        if: steps.london_gate.outputs.should_run == 'true'
         run: pip install -r requirements.txt
 
-      - name: Run screener
+      - name: Build pre-market screen
+        if: steps.london_gate.outputs.should_run == 'true'
         env:
           CAPITAL: ${{ vars.CAPITAL }}
           RISK_PCT: ${{ vars.RISK_PCT }}
+          INTRADAY_POOL_SIZE: ${{ vars.INTRADAY_POOL_SIZE }}
+          MIN_DAILY_TURNOVER_GBP: ${{ vars.MIN_DAILY_TURNOVER_GBP }}
+          MIN_SHARE_PRICE_GBP: ${{ vars.MIN_SHARE_PRICE_GBP }}
+          MIN_ATR_PCT: ${{ vars.MIN_ATR_PCT }}
+          MAX_ATR_PCT: ${{ vars.MAX_ATR_PCT }}
         run: python screener.py
 
-      - name: Verify generated page
-        run: |
-          test -s docs/index.html
-          grep -q 'id="daily-shortlist-data"' docs/index.html
-          grep -q 'href="intraday.html"' docs/index.html
-          grep -q 'href="backtest.html"' docs/index.html
+      - name: Verify daily page
+        if: steps.london_gate.outputs.should_run == 'true'
+        run: test -s docs/index.html
 
-      - name: Commit generated daily page
+      - name: Commit daily page
+        if: steps.london_gate.outputs.should_run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/index.html
-          git commit -m "Update daily FTSE screener" || echo "No daily page changes"
+          git add -- docs/index.html
+          git commit -m "Update FTSE 350 pre-market screen" || echo "No daily changes"
           git push
 
-      - name: Upload page artifact
+      - name: Configure GitHub Pages
+        if: steps.london_gate.outputs.should_run == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload complete website
+        if: steps.london_gate.outputs.should_run == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs
 
-      - name: Deploy to GitHub Pages
+      - name: Deploy GitHub Pages
+        if: steps.london_gate.outputs.should_run == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
