@@ -13,8 +13,6 @@ on:
         default: analyse
 
   schedule:
-    # Both UTC times are included to cover GMT and BST.
-    # The London-time check allows only the 09:05 run to continue.
     - cron: "5 8 * * 1-5"
     - cron: "5 9 * * 1-5"
 
@@ -39,71 +37,89 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Check London run time
-        if: github.event_name == 'schedule'
+      - name: Decide whether scheduled run should continue
+        id: london_gate
+        shell: bash
         run: |
-          london_time=$(TZ=Europe/London date +%H:%M)
-          echo "Current London time: $london_time"
-
-          if [ "$london_time" != "09:05" ]; then
-            echo "Seasonal duplicate run. Stopping successfully."
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          hour=$(TZ=Europe/London date +%H)
+          minute=$(TZ=Europe/London date +%M)
+          total=$((10#$hour * 60 + 10#$minute))
+
+          if [ "$total" -ge 540 ] && [ "$total" -le 579 ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Python
+        if: steps.london_gate.outputs.should_run == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Install dependencies
+        if: steps.london_gate.outputs.should_run == 'true'
         run: pip install -r requirements.txt
 
       - name: Record daily page checksum
-        run: |
-          sha256sum docs/index.html > /tmp/index-before.sha256
+        if: steps.london_gate.outputs.should_run == 'true'
+        run: sha256sum docs/index.html > /tmp/index-before.sha256
 
       - name: Build intraday report
+        if: steps.london_gate.outputs.should_run == 'true'
         env:
           CAPITAL: ${{ vars.CAPITAL }}
           RISK_PCT: ${{ vars.RISK_PCT }}
           TOP_N: ${{ vars.TOP_N }}
+          CANDIDATE_POOL_N: ${{ vars.CANDIDATE_POOL_N }}
           MAX_GAP_PCT: ${{ vars.MAX_GAP_PCT }}
           TARGET_R: ${{ vars.TARGET_R }}
           MIN_INTRADAY_SCORE: ${{ vars.MIN_INTRADAY_SCORE }}
           MIN_OPENING_VOLUME_RATIO: ${{ vars.MIN_OPENING_VOLUME_RATIO }}
+          MIN_OPENING_TURNOVER_GBP: ${{ vars.MIN_OPENING_TURNOVER_GBP }}
           MAX_VWAP_DISTANCE_PCT: ${{ vars.MAX_VWAP_DISTANCE_PCT }}
           ENTRY_BUFFER_PCT: ${{ vars.ENTRY_BUFFER_PCT }}
           MAX_ENTRY_EXTENSION_R: ${{ vars.MAX_ENTRY_EXTENSION_R }}
+          MAX_ACTIONABLE_TRADES: ${{ vars.MAX_ACTIONABLE_TRADES }}
+          MIN_ACTIONABLE_SCORE: ${{ vars.MIN_ACTIONABLE_SCORE }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            python intraday_daytrader.py               --mode "${{ inputs.mode }}"               --force
+            python intraday_daytrader.py --mode "${{ inputs.mode }}" --force
           else
             python intraday_daytrader.py --mode auto
           fi
 
       - name: Verify generated intraday page
+        if: steps.london_gate.outputs.should_run == 'true'
         run: |
           test -s docs/intraday.html
           sha256sum --check /tmp/index-before.sha256
-          echo "Intraday page generated and daily page unchanged."
 
       - name: Commit intraday page
+        if: steps.london_gate.outputs.should_run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add -- docs/intraday.html
           git commit -m "Update FTSE intraday report" || echo "No intraday changes"
           git push
 
       - name: Configure GitHub Pages
+        if: steps.london_gate.outputs.should_run == 'true'
         uses: actions/configure-pages@v5
 
       - name: Upload complete website
+        if: steps.london_gate.outputs.should_run == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs
 
       - name: Deploy GitHub Pages
+        if: steps.london_gate.outputs.should_run == 'true'
         id: deployment
         uses: actions/deploy-pages@v4
