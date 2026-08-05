@@ -1,4 +1,4 @@
-# FILE_VERSION: FTSE350_EARLY_LONG_SHORT_POOL_BLANK_ENV_SAFE_2026_08_05
+# FILE_VERSION: FTSE350_BLANK_ENV_HELPERS_FIXED_2026_08_05
 """
 FTSE 350 ex-investment-trust daily candlestick screener.
 
@@ -33,6 +33,33 @@ from urllib3.util.retry import Retry
 import pandas as pd
 import numpy as np
 import yfinance as yf
+
+
+def env_float(name: str, default: float) -> float:
+    """Read a float environment variable, treating blank values as unset."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return float(default)
+    try:
+        return float(str(raw).strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Environment variable {name} must be numeric; received {raw!r}"
+        ) from exc
+
+
+def env_int(name: str, default: int) -> int:
+    """Read an integer environment variable, treating blank values as unset."""
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return int(default)
+    try:
+        return int(str(raw).strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Environment variable {name} must be an integer; received {raw!r}"
+        ) from exc
+
 
 CAPITAL = env_float("CAPITAL", 5000)
 RISK_PCT = env_float("RISK_PCT", 1)
