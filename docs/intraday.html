@@ -1,126 +1,141 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE 350 intraday trades</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE 350 08:05 breakout trades</title>
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#12161F;color:#ECE7DA;font-family:Arial,sans-serif}
 .wrap{max-width:920px;margin:auto;padding:22px 14px 56px}a{color:#C9A24B}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid #2C333D;padding-bottom:16px}
 h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:#E8A493;font-size:12px;text-transform:uppercase;letter-spacing:.09em}
-.time,.pattern,.name,.footer,.story{color:#8B92A0;font-size:12px}.decision,.pick,.rejected,.expired{background:#1B2129;border:1px solid #2C333D;border-radius:9px;padding:15px;margin:14px 0}
+.time,.pattern,.name,.footer{color:#8B92A0;font-size:12px}.decision,.pick,.rejected,.expired{background:#1B2129;border:1px solid #2C333D;border-radius:9px;padding:15px;margin:14px 0}
 .decision strong{color:#C9A24B}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:#C9A24B;font-size:19px}.name{margin-left:8px}
 .score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}
-.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:#12161F;border:1px solid #2C333D;border-radius:6px;padding:9px}
+.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:#12161F;border:1px solid #2C333D;border-radius:6px;padding:9px}
 .metrics span{display:block;color:#8B92A0;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:#C9A24B;font-size:13px}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:#8B92A0;font-size:12px;line-height:1.5}
 .expired{display:none;border-color:#E8A493}.expired h2{color:#E8A493;margin-top:0}.footer{line-height:1.6;border-top:1px solid #2C333D;padding-top:14px;margin-top:20px}
-@media(max-width:680px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
+@media(max-width:760px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
 </style></head><body><main class="wrap">
-<div class="header"><div><div class="kicker">FTSE 350 ex trusts · actionable and trigger-based longs</div><h1>Opening-hour intraday decisions</h1></div><div class="time">Wed 05 Aug 2026<br>09:52 BST</div></div>
-<div class="decision"><strong>1 actionable now and 4 valid setups waiting for a trigger. The highest-ranked plan is marked NAP.</strong> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>
-<div id="expired-content" class="expired"><h2>Past the 10:00 cutoff</h2><p>The trade plans below are retained for review only. Do not use their purchase, trigger, stop or target levels now.</p></div>
+<div class="header"><div><div class="kicker">FTSE 350 ex trusts · 08:05 long and short breakout strategies</div><h1>08:05 OPENING BREAKOUT SCAN</h1></div><div class="time">Wed 05 Aug 2026<br>19:18 BST</div></div>
+<div class="decision"><strong>5 valid conditional setups; wait for the displayed trigger.</strong> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>
+<div id="expired-content" class="expired"><h2>Past the 09:30 cutoff</h2><p>The opening setups below are retained for review only. Do not use their levels now.</p></div>
 <div id="live-content">
 <section class="pick">
-<div class="pick-head"><div><strong class="epic">SGE</strong>
-<span class="name">Sage Group</span>
-<div class="pattern">Liquid trend/volatility candidate · daily pool 81/100</div></div>
-<div class="score"><span style="color:#4FAE73">NAP — ACTIONABLE</span><strong>100/100</strong></div></div>
-<p class="recommendation" data-original="Executable long setup at approximately £10.24, subject to checking the live broker quote and spread.">Executable long setup at approximately £10.24, subject to checking the live broker quote and spread.</p>
+<div class="pick-head"><div>
+<strong class="epic">RIO</strong>
+<span class="name">Rio Tinto</span>
+<div class="pattern" style="color:#4FAE73">Long · Liquid long trend/volatility candidate</div>
+</div><div class="score"><span style="color:#C9A24B">NAP — WAIT FOR BREAK</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Valid conditional long setup. Enter only on a clean move above £75.14; do not chase beyond £75.52.">Valid conditional long setup. Enter only on a clean move above £75.14; do not chase beyond £75.52.</p>
 <div class="metrics">
-<div><span>Latest completed price</span><strong>£10.24 at 09:35</strong></div>
-<div><span>Maximum purchase</span><strong>£10.30</strong></div>
-<div><span>Stop / 2R target</span><strong>£9.97 / £10.78</strong></div>
+<div><span>Latest completed price</span><strong>£75.09 at 08:00</strong></div>
+<div><span>Entry trigger</span><strong>£75.14</strong></div>
+<div><span>Maximum entry</span><strong>£75.52</strong></div>
+<div><span>Stop / 2R target</span><strong>£74.04 / £77.19</strong></div>
+<div><span>Opening gap</span><strong>+1.45%</strong></div>
+<div><span>Opening move / range</span><strong>+2.54% / 1.45%</strong></div>
+<div><span>Close / VWAP</span><strong>£75.09 / £74.74</strong></div>
+<div><span>Relative volume / turnover</span><strong>1.17× / £4,888,434</strong></div>
+<div><span>Indicative size</span><strong>0 shares</strong></div>
+<div><span>Position value / risk</span><strong>£0.00 / £0.00</strong></div>
+</div>
+<details><summary>Assessment details</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>1 completed five-minute bars were available.</li><li>Price moved in the intended long direction from yesterday&#x27;s close.</li><li>Price was on the correct side of VWAP for a long.</li><li>The opening gap was controlled.</li><li>The early opening range was usable.</li><li>Price held near the favourable end of the opening range.</li><li>Volume was 1.17× the comparable opening window.</li><li>Opening turnover was about £4,888,434.</li><li>Price was not excessively stretched from VWAP.</li><li>The opening-range stop structure was valid.</li></ul></div>
+<div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
+</div></details></section>
+<section class="pick">
+<div class="pick-head"><div>
+<strong class="epic">BA</strong>
+<span class="name">BAE Systems</span>
+<div class="pattern" style="color:#4FAE73">Long · Liquid long trend/volatility candidate</div>
+</div><div class="score"><span style="color:#C9A24B">WAIT FOR BREAK</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Valid conditional long setup. Enter only on a clean move above £22.17; do not chase beyond £22.23.">Valid conditional long setup. Enter only on a clean move above £22.17; do not chase beyond £22.23.</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>£22.14 at 08:00</strong></div>
+<div><span>Entry trigger</span><strong>£22.17</strong></div>
+<div><span>Maximum entry</span><strong>£22.23</strong></div>
+<div><span>Stop / 2R target</span><strong>£22.00 / £22.42</strong></div>
+<div><span>Opening gap</span><strong>+0.87%</strong></div>
+<div><span>Opening move / range</span><strong>+1.37% / 0.73%</strong></div>
+<div><span>Close / VWAP</span><strong>£22.14 / £22.10</strong></div>
+<div><span>Relative volume / turnover</span><strong>1.38× / £2,281,748</strong></div>
+<div><span>Indicative size</span><strong>1 shares</strong></div>
+<div><span>Position value / risk</span><strong>£22.14 / £0.14</strong></div>
+</div>
+<details><summary>Assessment details</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>1 completed five-minute bars were available.</li><li>Price moved in the intended long direction from yesterday&#x27;s close.</li><li>Price was on the correct side of VWAP for a long.</li><li>The opening gap was controlled.</li><li>The early opening range was usable.</li><li>Price held near the favourable end of the opening range.</li><li>Volume was 1.38× the comparable opening window.</li><li>Opening turnover was about £2,281,748.</li><li>Price was not excessively stretched from VWAP.</li><li>The opening-range stop structure was valid.</li></ul></div>
+<div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
+</div></details></section>
+<section class="pick">
+<div class="pick-head"><div>
+<strong class="epic">QQ</strong>
+<span class="name">Qinetiq</span>
+<div class="pattern" style="color:#4FAE73">Long · Liquid long trend/volatility candidate</div>
+</div><div class="score"><span style="color:#C9A24B">WAIT FOR BREAK</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Valid conditional long setup. Enter only on a clean move above £5.50; do not chase beyond £5.53.">Valid conditional long setup. Enter only on a clean move above £5.50; do not chase beyond £5.53.</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>£5.49 at 08:00</strong></div>
+<div><span>Entry trigger</span><strong>£5.50</strong></div>
+<div><span>Maximum entry</span><strong>£5.53</strong></div>
+<div><span>Stop / 2R target</span><strong>£5.42 / £5.61</strong></div>
+<div><span>Opening gap</span><strong>+0.74%</strong></div>
+<div><span>Opening move / range</span><strong>+1.86% / 1.39%</strong></div>
+<div><span>Close / VWAP</span><strong>£5.49 / £5.47</strong></div>
+<div><span>Relative volume / turnover</span><strong>2.13× / £561,609</strong></div>
+<div><span>Indicative size</span><strong>7 shares</strong></div>
+<div><span>Position value / risk</span><strong>£38.40 / £0.42</strong></div>
+</div>
+<details><summary>Assessment details</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>1 completed five-minute bars were available.</li><li>Price moved in the intended long direction from yesterday&#x27;s close.</li><li>Price was on the correct side of VWAP for a long.</li><li>The opening gap was controlled.</li><li>The early opening range was usable.</li><li>Price held near the favourable end of the opening range.</li><li>Volume was 2.13× the comparable opening window.</li><li>Opening turnover was about £561,609.</li><li>Price was not excessively stretched from VWAP.</li><li>The opening-range stop structure was valid.</li></ul></div>
+<div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
+</div></details></section>
+<section class="pick">
+<div class="pick-head"><div>
+<strong class="epic">PRU</strong>
+<span class="name">Prudential</span>
+<div class="pattern" style="color:#D1594B">Short · Liquid short trend/volatility candidate</div>
+</div><div class="score"><span style="color:#C9A24B">WAIT FOR BREAK</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Valid conditional short setup. Enter only on a clean move below £10.80; do not chase beyond £10.75.">Valid conditional short setup. Enter only on a clean move below £10.80; do not chase beyond £10.75.</p>
+<div class="metrics">
+<div><span>Latest completed price</span><strong>£10.87 at 08:00</strong></div>
+<div><span>Entry trigger</span><strong>£10.80</strong></div>
+<div><span>Maximum entry</span><strong>£10.75</strong></div>
+<div><span>Stop / 2R target</span><strong>£10.97 / £10.65</strong></div>
+<div><span>Opening gap</span><strong>-0.14%</strong></div>
+<div><span>Opening move / range</span><strong>-0.82% / 1.46%</strong></div>
+<div><span>Close / VWAP</span><strong>£10.87 / £10.88</strong></div>
+<div><span>Relative volume / turnover</span><strong>1.08× / £2,261,615</strong></div>
 <div><span>Indicative size</span><strong>3 shares</strong></div>
-<div><span>Opening gap</span><strong>-0.30%</strong></div>
-<div><span>Opening range</span><strong>2.59%</strong></div>
-<div><span>Close / VWAP</span><strong>£10.19 / £10.17</strong></div>
-<div><span>Relative volume / turnover</span><strong>0.84× / £1,070,148</strong></div>
+<div><span>Position value / risk</span><strong>£32.59 / £0.32</strong></div>
 </div>
-<p class="story">Price finished in the upper part of the opening range, but without a decisive full-hour candle.</p>
-<details><summary>Why</summary><div class="detail-grid">
-<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening volume was 0.84× normal.</li><li>Opening turnover was about £1,070,148.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
+<details><summary>Assessment details</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>1 completed five-minute bars were available.</li><li>Price moved in the intended short direction from yesterday&#x27;s close.</li><li>Price was on the correct side of VWAP for a short.</li><li>The opening gap was controlled.</li><li>The early opening range was usable.</li><li>Price held near the favourable end of the opening range.</li><li>Volume was 1.08× the comparable opening window.</li><li>Opening turnover was about £2,261,615.</li><li>Price was not excessively stretched from VWAP.</li><li>The opening-range stop structure was valid.</li></ul></div>
+<div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
 </div></details></section>
 <section class="pick">
-<div class="pick-head"><div><strong class="epic">JDW</strong>
-<span class="name">Wetherspoon (J.D)</span>
-<div class="pattern">Liquid trend/volatility candidate · daily pool 82/100</div></div>
-<div class="score"><span style="color:#C9A24B">WAIT FOR BREAK</span><strong>100/100</strong></div></div>
-<p class="recommendation" data-original="Not ready yet. Consider only if price breaks £8.23; do not pay above £8.29.">Not ready yet. Consider only if price breaks £8.23; do not pay above £8.29.</p>
+<div class="pick-head"><div>
+<strong class="epic">INVP</strong>
+<span class="name">Investec</span>
+<div class="pattern" style="color:#4FAE73">Long · Liquid long trend/volatility candidate</div>
+</div><div class="score"><span style="color:#C9A24B">WAIT FOR BREAK</span><strong>100/100</strong></div></div>
+<p class="recommendation" data-original="Valid conditional long setup. Enter only on a clean move above £6.77; do not chase beyond £6.79.">Valid conditional long setup. Enter only on a clean move above £6.77; do not chase beyond £6.79.</p>
 <div class="metrics">
-<div><span>Latest completed price</span><strong>£8.18 at 09:35</strong></div>
-<div><span>Maximum purchase</span><strong>£8.29</strong></div>
-<div><span>Stop / 2R target</span><strong>£8.02 / £8.49</strong></div>
-<div><span>Indicative size</span><strong>4 shares</strong></div>
-<div><span>Opening gap</span><strong>+0.06%</strong></div>
-<div><span>Opening range</span><strong>2.58%</strong></div>
-<div><span>Close / VWAP</span><strong>£8.22 / £8.16</strong></div>
-<div><span>Relative volume / turnover</span><strong>1.62× / £347,013</strong></div>
-</div>
-<p class="story">Price finished in the upper part of the opening range, but without a decisive full-hour candle.</p>
-<details><summary>Why</summary><div class="detail-grid">
-<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening volume was 1.62× normal.</li><li>Opening turnover was about £347,013.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
-</div></details></section>
-<section class="pick">
-<div class="pick-head"><div><strong class="epic">BRWM</strong>
-<span class="name">BlackRock World Mining Trust plc</span>
-<div class="pattern">Liquid trend/volatility candidate · daily pool 76/100</div></div>
-<div class="score"><span style="color:#C9A24B">WAIT FOR BREAK</span><strong>100/100</strong></div></div>
-<p class="recommendation" data-original="Not ready yet. Consider only if price breaks £9.49; do not pay above £9.59.">Not ready yet. Consider only if price breaks £9.49; do not pay above £9.59.</p>
-<div class="metrics">
-<div><span>Latest completed price</span><strong>£9.36 at 09:35</strong></div>
-<div><span>Maximum purchase</span><strong>£9.59</strong></div>
-<div><span>Stop / 2R target</span><strong>£9.12 / £9.84</strong></div>
-<div><span>Indicative size</span><strong>4 shares</strong></div>
-<div><span>Opening gap</span><strong>+0.66%</strong></div>
-<div><span>Opening range</span><strong>4.07%</strong></div>
-<div><span>Close / VWAP</span><strong>£9.36 / £9.36</strong></div>
-<div><span>Relative volume / turnover</span><strong>2.00× / £473,569</strong></div>
-</div>
-<p class="story">Price remained indecisive near the middle of the opening range.</p>
-<details><summary>Why</summary><div class="detail-grid">
-<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening volume was 2.00× normal.</li><li>Opening turnover was about £473,569.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
-</div></details></section>
-<section class="pick">
-<div class="pick-head"><div><strong class="epic">PETS</strong>
-<span class="name">Pets at home</span>
-<div class="pattern">Liquid trend/volatility candidate · daily pool 75/100</div></div>
-<div class="score"><span style="color:#C9A24B">WAIT FOR BREAK</span><strong>100/100</strong></div></div>
-<p class="recommendation" data-original="Not ready yet. Consider only if price breaks £2.15; do not pay above £2.16.">Not ready yet. Consider only if price breaks £2.15; do not pay above £2.16.</p>
-<div class="metrics">
-<div><span>Latest completed price</span><strong>£2.13 at 09:35</strong></div>
-<div><span>Maximum purchase</span><strong>£2.16</strong></div>
-<div><span>Stop / 2R target</span><strong>£2.09 / £2.22</strong></div>
-<div><span>Indicative size</span><strong>18 shares</strong></div>
-<div><span>Opening gap</span><strong>-1.32%</strong></div>
-<div><span>Opening range</span><strong>2.74%</strong></div>
-<div><span>Close / VWAP</span><strong>£2.13 / £2.13</strong></div>
-<div><span>Relative volume / turnover</span><strong>0.97× / £159,258</strong></div>
-</div>
-<p class="story">A strong bullish opening candle held near the upper part of the range.</p>
-<details><summary>Why</summary><div class="detail-grid">
-<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Price held in the upper part of the opening range.</li><li>Opening volume was 0.97× normal.</li><li>Opening turnover was about £159,258.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
-</div></details></section>
-<section class="pick">
-<div class="pick-head"><div><strong class="epic">PCT</strong>
-<span class="name">Polar Capital Technology Trust</span>
-<div class="pattern">Liquid trend/volatility candidate · daily pool 79/100</div></div>
-<div class="score"><span style="color:#C9A24B">WAIT FOR BREAK</span><strong>90/100</strong></div></div>
-<p class="recommendation" data-original="Not ready yet. Consider only if price breaks £6.80; do not pay above £6.82.">Not ready yet. Consider only if price breaks £6.80; do not pay above £6.82.</p>
-<div class="metrics">
-<div><span>Latest completed price</span><strong>£6.77 at 09:35</strong></div>
-<div><span>Maximum purchase</span><strong>£6.82</strong></div>
-<div><span>Stop / 2R target</span><strong>£6.73 / £6.86</strong></div>
+<div><span>Latest completed price</span><strong>£6.76 at 08:00</strong></div>
+<div><span>Entry trigger</span><strong>£6.77</strong></div>
+<div><span>Maximum entry</span><strong>£6.79</strong></div>
+<div><span>Stop / 2R target</span><strong>£6.74 / £6.82</strong></div>
+<div><span>Opening gap</span><strong>+0.82%</strong></div>
+<div><span>Opening move / range</span><strong>+0.89% / 0.45%</strong></div>
+<div><span>Close / VWAP</span><strong>£6.76 / £6.76</strong></div>
+<div><span>Relative volume / turnover</span><strong>0.74× / £94,155</strong></div>
 <div><span>Indicative size</span><strong>5 shares</strong></div>
-<div><span>Opening gap</span><strong>+0.67%</strong></div>
-<div><span>Opening range</span><strong>1.10%</strong></div>
-<div><span>Close / VWAP</span><strong>£6.77 / £6.76</strong></div>
-<div><span>Relative volume / turnover</span><strong>1.05× / £2,456,142</strong></div>
+<div><span>Position value / risk</span><strong>£33.82 / £0.12</strong></div>
 </div>
-<p class="story">Price remained indecisive near the middle of the opening range.</p>
-<details><summary>Why</summary><div class="detail-grid">
-<div><h3>Passed</h3><ul><li>Enough five-minute bars for execution.</li><li>The first hour finished above the previous close.</li><li>Price finished above opening-hour VWAP.</li><li>The opening gap was controlled.</li><li>The opening range was usable.</li><li>Opening volume was 1.05× normal.</li><li>Opening turnover was about £2,456,142.</li><li>Price was not overextended from VWAP.</li><li>The stop structure was valid.</li></ul></div><div><h3>Failed or cautions</h3><ul><li>Price did not hold in the upper part of the opening range.</li></ul></div>
+<details><summary>Assessment details</summary><div class="detail-grid">
+<div><h3>Passed</h3><ul><li>1 completed five-minute bars were available.</li><li>Price moved in the intended long direction from yesterday&#x27;s close.</li><li>Price was on the correct side of VWAP for a long.</li><li>The opening gap was controlled.</li><li>The early opening range was usable.</li><li>Price held near the favourable end of the opening range.</li><li>Volume was 0.74× the comparable opening window.</li><li>Opening turnover was about £94,155.</li><li>Price was not excessively stretched from VWAP.</li><li>The opening-range stop structure was valid.</li></ul></div>
+<div><h3>Failed or cautions</h3><ul><li>None</li></ul></div>
 </div></details></section>
-<details class="rejected"><summary>Other candidates assessed but not recommended</summary><ul><li><strong>BOY</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.</li><li><strong>NXT</strong> — REJECTED: The opening gap of +3.26% was excessive.</li><li><strong>RS1</strong> — WAIT FOR BREAK: Opening volume was unavailable or below the minimum.</li><li><strong>GNC</strong> — WAIT FOR BREAK: Opening volume was unavailable or below the minimum.</li><li><strong>ELM</strong> — WAIT FOR BREAK: Opening volume was unavailable or below the minimum.</li><li><strong>GRG</strong> — REJECTED: Price finished below opening-hour VWAP.</li><li><strong>JMAT</strong> — REJECTED: Price finished below opening-hour VWAP.</li><li><strong>SSPG</strong> — REJECTED: Price finished below opening-hour VWAP.</li><li><strong>FOUR</strong> — REJECTED: The opening gap of +4.98% was excessive.; The opening range of 8.70% was not suitable.</li><li><strong>TPK</strong> — WAIT FOR BREAK: Price did not hold in the upper part of the opening range.; Opening volume was unavailable or below the minimum.</li><li><strong>GROW</strong> — REJECTED: The opening gap of -3.63% was excessive.; The opening range of 5.37% was not suitable.</li><li><strong>GGP</strong> — REJECTED: The opening gap of +4.92% was excessive.; Price did not hold in the upper part of the opening range.</li><li><strong>GFTU</strong> — REJECTED: Opening volume was unavailable or below the minimum.; Opening turnover of about £42,862 was too low.</li><li><strong>UKW</strong> — WAIT FOR BREAK: Price did not hold in the upper part of the opening range.; Opening volume was unavailable or below the minimum.</li><li><strong>RIO</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>QQ</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>KIE</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>EXPN</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>ICG</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>SPX</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>CHG</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>MGAM</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>BAB</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>NWG</strong> — REJECTED: The first hour did not finish above the previous close.; Price did not hold in the upper part of the opening range.</li><li><strong>HLMA</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>INVP</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>MKS</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>WEIR</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>BCG</strong> — REJECTED: The opening gap of -4.67% was excessive.; Opening volume was unavailable or below the minimum.</li><li><strong>WIZZ</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>TRN</strong> — REJECTED: Price did not hold in the upper part of the opening range.; Opening volume was unavailable or below the minimum.</li><li><strong>GLEN</strong> — REJECTED: Price finished below opening-hour VWAP.; The opening gap of +3.17% was excessive.</li><li><strong>BA</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>RR</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>BWY</strong> — REJECTED: The first hour did not finish above the previous close.; The opening gap of -2.09% was excessive.</li><li><strong>CKN</strong> — REJECTED: The first hour did not finish above the previous close.; Price did not hold in the upper part of the opening range.</li><li><strong>HOC</strong> — REJECTED: Price finished below opening-hour VWAP.; The opening gap of +3.23% was excessive.</li><li><strong>DPLM</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>AAL</strong> — REJECTED: Price finished below opening-hour VWAP.; The opening gap of +2.87% was excessive.</li><li><strong>ANTO</strong> — REJECTED: Price finished below opening-hour VWAP.; The opening gap of +2.69% was excessive.</li><li><strong>DOM</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>FRES</strong> — REJECTED: Price finished below opening-hour VWAP.; The opening gap of +3.91% was excessive.</li><li><strong>RSW</strong> — REJECTED: Price finished below opening-hour VWAP.; Price did not hold in the upper part of the opening range.</li><li><strong>BPT</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.; Price finished below opening-hour VWAP.</li><li><strong>FAN</strong> — REJECTED: Price finished below opening-hour VWAP.; The opening gap of +4.79% was excessive.</li><li><strong>BREE</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>CRDA</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>DSCV</strong> — REJECTED: Price finished below opening-hour VWAP.; The opening gap of +5.14% was excessive.</li><li><strong>BKG</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>MNDI</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>BTRW</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>RCP</strong> — DATA ONLY: Too few opening-hour bars for a recommendation.; The first hour did not finish above the previous close.</li><li><strong>BRBY</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>KGF</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li><li><strong>PSN</strong> — REJECTED: The first hour did not finish above the previous close.; Price finished below opening-hour VWAP.</li></ul></details></div>
-<p class="footer">The page shows up to five valid long trade plans. ACTIONABLE means the trigger has broken and the latest completed five-minute price remains acceptable. WAIT FOR BREAK is a valid conditional recommendation, but it must not be bought before the displayed trigger.</p>
+<details class="rejected"><summary>Other candidates assessed but not recommended</summary><ul><li><strong>SVS</strong> (Long) — WAIT FOR BREAK: Valid conditional long setup. Enter only on a clean move above £9.57; do not chase beyond £9.63.</li><li><strong>AAL</strong> (Long) — REJECTED: The opening gap of +2.87% was excessive.</li><li><strong>FRES</strong> (Long) — REJECTED: The opening gap of +3.91% was excessive.</li><li><strong>NXT</strong> (Long) — REJECTED: The opening gap of +3.26% was excessive.</li><li><strong>IGG</strong> (Short) — WAIT FOR BREAK: Comparable opening volume was unavailable or too weak.</li><li><strong>CHG</strong> (Long) — REJECTED: Opening turnover of about £28,908 was too low.</li><li><strong>SN</strong> (Short) — WAIT FOR BREAK: Comparable opening volume was unavailable or too weak.</li><li><strong>DPLM</strong> (Long) — WAIT FOR BREAK: Comparable opening volume was unavailable or too weak.</li><li><strong>GAW</strong> (Short) — WAIT FOR BREAK: Price did not hold near the favourable end of the opening range.</li><li><strong>ANTO</strong> (Long) — REJECTED: The opening gap of +2.69% was excessive.; Comparable opening volume was unavailable or too weak.</li><li><strong>MGAM</strong> (Long) — REJECTED: Comparable opening volume was unavailable or too weak.; Opening turnover of about £15,426 was too low.</li><li><strong>RSW</strong> (Long) — REJECTED: Comparable opening volume was unavailable or too weak.; Opening turnover of about £10,741 was too low.</li><li><strong>MNDI</strong> (Long) — WAIT FOR BREAK: Price did not hold near the favourable end of the opening range.; Comparable opening volume was unavailable or too weak.</li><li><strong>ICG</strong> (Long) — WAIT FOR BREAK: Price did not hold near the favourable end of the opening range.; Comparable opening volume was unavailable or too weak.</li><li><strong>VCT</strong> (Long) — REJECTED: Price did not hold near the favourable end of the opening range.; Opening turnover of about £22,033 was too low.</li><li><strong>MEGP</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Opening turnover of about £16,765 was too low.</li><li><strong>TPK</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>WIZZ</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>ABDN</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>SSPG</strong> (Long) — REJECTED: Price did not hold near the favourable end of the opening range.; Comparable opening volume was unavailable or too weak.</li><li><strong>BOY</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>FOUR</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; The opening gap of +4.98% was excessive.</li><li><strong>EDV</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>JMAT</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>BPT</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>UKW</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>SPX</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>GNC</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>CRDA</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>DOM</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>PHI</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>EMG</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Comparable opening volume was unavailable or too weak.</li><li><strong>ENOG</strong> (Short) — REJECTED: Price was on the wrong side of VWAP for a short.; Comparable opening volume was unavailable or too weak.</li><li><strong>AZN</strong> (Short) — REJECTED: Price was on the wrong side of VWAP for a short.; Price did not hold near the favourable end of the opening range.</li><li><strong>HLMA</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>IMI</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>BTRW</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>CNA</strong> (Short) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a short.</li><li><strong>HOC</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; The opening gap of +3.23% was excessive.</li><li><strong>GLEN</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; The opening gap of +3.17% was excessive.</li><li><strong>LRE</strong> (Short) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price did not hold near the favourable end of the opening range.</li><li><strong>GEN</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>RR</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>KIE</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>RS1</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>SMIN</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>HWDN</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>GFTU</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>BAB</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>EZJ</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>JDW</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>RTO</strong> (Short) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a short.</li><li><strong>NWG</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>BREE</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>LLOY</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>PSN</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>ELM</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; Price did not hold near the favourable end of the opening range.</li><li><strong>FAN</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; The opening gap of +4.79% was excessive.</li><li><strong>DSCV</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; The opening gap of +5.14% was excessive.</li><li><strong>LSEG</strong> (Short) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a short.</li><li><strong>TRN</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>GPE</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>TRST</strong> (Long) — REJECTED: Price was on the wrong side of VWAP for a long.; The opening gap of +3.75% was excessive.</li><li><strong>CKN</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>PLUS</strong> (Short) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a short.</li><li><strong>BATS</strong> (Short) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a short.</li><li><strong>BRBY</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>DRX</strong> (Short) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a short.</li><li><strong>KGF</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>BKG</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>BARC</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>BGEO</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>GROW</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>BWY</strong> (Long) — REJECTED: Price did not move in the intended direction from yesterday&#x27;s close.; Price was on the wrong side of VWAP for a long.</li><li><strong>GGP</strong> (Long) — DATA ONLY: Previous close or opening data was unavailable.</li></ul></details></div>
+<p class="footer">The opening scan uses the first completed 08:00–08:05 five-minute bar. Longs require strength above the previous close and VWAP; shorts require weakness below both. ACTIONABLE means the opening-range trigger has broken without being chased. WAIT FOR BREAK is conditional and must not be entered early.</p>
 </main><script>
-(function(){const expiry=new Date('2026-08-05T10:00:00+01:00');const expired=document.getElementById('expired-content');
-function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){const original=el.dataset.original||el.textContent;el.dataset.original=original;el.textContent='PAST 10:00 — Do not follow this recommendation now. Original assessment: '+original;});}}
+(function(){const expiry=new Date('2026-08-05T09:30:00+01:00');const expired=document.getElementById('expired-content');
+function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){const original=el.dataset.original||el.textContent;el.dataset.original=original;el.textContent='PAST 09:30 — Do not follow this recommendation now. Original assessment: '+original;});}}
 enforce();setInterval(enforce,30000);})();
 </script></body></html>
