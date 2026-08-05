@@ -1,4 +1,4 @@
-# FILE_VERSION: FTSE350_EARLY_LONG_SHORT_POOL_2026_08_05
+# FILE_VERSION: FTSE350_EARLY_LONG_SHORT_POOL_BLANK_ENV_SAFE_2026_08_05
 """
 FTSE 350 ex-investment-trust daily candlestick screener.
 
@@ -34,13 +34,13 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 
-CAPITAL = float(os.environ.get("CAPITAL", "5000"))
-RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
-INTRADAY_POOL_SIZE = int(os.environ.get("INTRADAY_POOL_SIZE", "80"))
-MIN_DAILY_TURNOVER_GBP = float(os.environ.get("MIN_DAILY_TURNOVER_GBP", "2000000"))
-MIN_SHARE_PRICE_GBP = float(os.environ.get("MIN_SHARE_PRICE_GBP", "1.00"))
-MIN_ATR_PCT = float(os.environ.get("MIN_ATR_PCT", "1.0"))
-MAX_ATR_PCT = float(os.environ.get("MAX_ATR_PCT", "6.0"))
+CAPITAL = env_float("CAPITAL", 5000)
+RISK_PCT = env_float("RISK_PCT", 1)
+INTRADAY_POOL_SIZE = env_int("INTRADAY_POOL_SIZE", 80)
+MIN_DAILY_TURNOVER_GBP = env_float("MIN_DAILY_TURNOVER_GBP", 2000000)
+MIN_SHARE_PRICE_GBP = env_float("MIN_SHARE_PRICE_GBP", 1.00)
+MIN_ATR_PCT = env_float("MIN_ATR_PCT", 1.0)
+MAX_ATR_PCT = env_float("MAX_ATR_PCT", 6.0)
 OUTPUT_PATH = os.path.join(os.path.dirname(__file__), "docs", "index.html")
 LSE_URL = "https://www.lse.co.uk/indices/ftse-350/constituents.html"
 LSE_HOME_URL = "https://www.lse.co.uk/"
