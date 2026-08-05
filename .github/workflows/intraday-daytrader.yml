@@ -1,4 +1,4 @@
-name: FTSE Opening-Hour Day-Trade Review
+name: FTSE 08:05 Opening Breakout Review
 
 on:
   workflow_dispatch:
@@ -13,8 +13,10 @@ on:
         default: analyse
 
   schedule:
-    - cron: "5 8 * * 1-5"
-    - cron: "5 9 * * 1-5"
+    # Run just after the first five-minute bar completes.
+    # 08:07 London: 07:07 UTC during BST and 08:07 UTC during GMT.
+    - cron: "7 7 * * 1-5"
+    - cron: "7 8 * * 1-5"
 
 permissions:
   contents: write
@@ -50,7 +52,8 @@ jobs:
           minute=$(TZ=Europe/London date +%M)
           total=$((10#$hour * 60 + 10#$minute))
 
-          if [ "$total" -ge 540 ] && [ "$total" -le 579 ]; then
+          # Accept delayed starts from 08:05 through 08:25 London time.
+          if [ "$total" -ge 485 ] && [ "$total" -le 505 ]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
@@ -70,16 +73,14 @@ jobs:
         if: steps.london_gate.outputs.should_run == 'true'
         run: sha256sum docs/index.html > /tmp/index-before.sha256
 
-      - name: Build intraday report
+      - name: Build opening breakout report
         if: steps.london_gate.outputs.should_run == 'true'
         env:
           CAPITAL: ${{ vars.CAPITAL }}
           RISK_PCT: ${{ vars.RISK_PCT }}
-          TOP_N: ${{ vars.TOP_N }}
           CANDIDATE_POOL_N: ${{ vars.CANDIDATE_POOL_N }}
           MAX_GAP_PCT: ${{ vars.MAX_GAP_PCT }}
           TARGET_R: ${{ vars.TARGET_R }}
-          MIN_INTRADAY_SCORE: ${{ vars.MIN_INTRADAY_SCORE }}
           MIN_OPENING_VOLUME_RATIO: ${{ vars.MIN_OPENING_VOLUME_RATIO }}
           MIN_OPENING_TURNOVER_GBP: ${{ vars.MIN_OPENING_TURNOVER_GBP }}
           MAX_VWAP_DISTANCE_PCT: ${{ vars.MAX_VWAP_DISTANCE_PCT }}
@@ -106,7 +107,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- docs/intraday.html
-          git commit -m "Update FTSE intraday report" || echo "No intraday changes"
+          git commit -m "Update FTSE 08:05 breakout report" || echo "No intraday changes"
           git push
 
       - name: Configure GitHub Pages
