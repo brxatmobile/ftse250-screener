@@ -1,3 +1,4 @@
+# FILE_VERSION: FTSE350_EARLY_LONG_SHORT_POOL_2026_08_05
 """
 FTSE 350 ex-investment-trust daily candlestick screener.
 
@@ -35,7 +36,7 @@ import yfinance as yf
 
 CAPITAL = float(os.environ.get("CAPITAL", "5000"))
 RISK_PCT = float(os.environ.get("RISK_PCT", "1"))
-INTRADAY_POOL_SIZE = int(os.environ.get("INTRADAY_POOL_SIZE", "60"))
+INTRADAY_POOL_SIZE = int(os.environ.get("INTRADAY_POOL_SIZE", "80"))
 MIN_DAILY_TURNOVER_GBP = float(os.environ.get("MIN_DAILY_TURNOVER_GBP", "2000000"))
 MIN_SHARE_PRICE_GBP = float(os.environ.get("MIN_SHARE_PRICE_GBP", "1.00"))
 MIN_ATR_PCT = float(os.environ.get("MIN_ATR_PCT", "1.0"))
@@ -217,7 +218,7 @@ FUND_NAME_TERMS = (
 def is_excluded_collective(name):
     """Exclude investment trusts, listed funds, ETFs and REIT-style vehicles."""
     upper = f" {str(name).upper()} "
-    return any(term in upper for term in TRUST_NAME_TERMS + FUND_NAME_TERMS)
+    return (" TRUST " in upper or " ETF " in upper or " REIT " in upper or any(term in upper for term in TRUST_NAME_TERMS + FUND_NAME_TERMS))
 
 
 def fetch_ftse250_constituents():
@@ -525,17 +526,16 @@ def analyze(epic, name, df):
 
 def build_intraday_candidate(epic, name, df):
     """
-    Build the separate intraday candidate pool.
+    Build a liquid FTSE 350 intraday candidate in either direction.
 
-    This does not require a named candlestick pattern. It looks for operating
-    companies with adequate price, turnover and useful recent volatility, then
-    retains long-biased names for the opening-hour review.
+    The daily candlestick top five remains separate. This pool is designed for
+    the 08:22 and 08:37 London opening scans and therefore prioritises:
+    liquidity, useful volatility, and a clear recent directional bias.
     """
     frame = df.dropna(subset=["Open", "High", "Low", "Close", "Volume"]).copy()
     if len(frame) < 25:
         return None
 
-    opens = frame["Open"].astype(float)
     highs = frame["High"].astype(float)
     lows = frame["Low"].astype(float)
     closes = frame["Close"].astype(float)
@@ -563,42 +563,58 @@ def build_intraday_candidate(epic, name, df):
     avg_turnover_gbp = avg_volume_20 * price_gbp
     volume_ratio = last_volume / avg_volume_20 if avg_volume_20 > 0 else 0.0
 
-    sma20_value = float(closes.tail(20).mean())
+    sma20 = float(closes.tail(20).mean())
     momentum_5d = ((close / float(closes.iloc[-6])) - 1.0) * 100
     momentum_20d = ((close / float(closes.iloc[-21])) - 1.0) * 100
+    trend_pct = ((close / sma20) - 1.0) * 100 if sma20 else 0.0
 
     if avg_turnover_gbp < MIN_DAILY_TURNOVER_GBP:
         return None
     if not (MIN_ATR_PCT <= atr_pct <= MAX_ATR_PCT):
         return None
 
-    # Long bias without making the pool so narrow that no intraday choices remain.
-    if close < sma20_value * 0.985 or momentum_5d < -1.5:
+    long_bias = close >= sma20 and momentum_5d >= 0.5
+    short_bias = close <= sma20 and momentum_5d <= -0.5
+
+    if not long_bias and not short_bias:
         return None
 
-    trend_pct = ((close / sma20_value) - 1.0) * 100 if sma20_value else 0.0
+    direction = "Long" if long_bias else "Short"
+    directional_trend = trend_pct if direction == "Long" else -trend_pct
+    directional_momentum_5d = momentum_5d if direction == "Long" else -momentum_5d
+    directional_momentum_20d = momentum_20d if direction == "Long" else -momentum_20d
+
     score = 0.0
-    score += min(25.0, max(0.0, 12.5 + trend_pct * 3.0))
-    score += min(20.0, max(0.0, 10.0 + momentum_5d * 2.0))
-    score += min(15.0, max(0.0, 7.5 + momentum_20d * 0.75))
+    score += min(25.0, max(0.0, 10.0 + directional_trend * 3.0))
+    score += min(22.0, max(0.0, 8.0 + directional_momentum_5d * 2.0))
+    score += min(13.0, max(0.0, 5.0 + directional_momentum_20d * 0.7))
     score += min(15.0, max(0.0, volume_ratio * 7.5))
     score += min(15.0, max(0.0, atr_pct * 3.0))
-    score += min(10.0, max(0.0, math.log10(max(avg_turnover_gbp, 1.0)) - 5.0) * 5.0)
+    score += min(
+        10.0,
+        max(0.0, math.log10(max(avg_turnover_gbp, 1.0)) - 5.0) * 5.0,
+    )
 
-    daily_stop = float(lows.tail(3).min()) * 0.997
-    risk = max(close - daily_stop, 0.0)
+    if direction == "Long":
+        structural_stop = float(lows.tail(3).min()) * 0.997
+        risk = max(close - structural_stop, 0.0)
+        target = close + 2.0 * risk
+    else:
+        structural_stop = float(highs.tail(3).max()) * 1.003
+        risk = max(structural_stop - close, 0.0)
+        target = close - 2.0 * risk
 
     return {
         "epic": epic,
         "name": name,
-        "direction": "Long",
-        "pattern": "Liquid trend/volatility candidate",
+        "direction": direction,
+        "pattern": f"Liquid {direction.lower()} trend/volatility candidate",
         "score": min(100.0, score),
         "entry": close,
-        "stop": daily_stop,
-        "target": close + 2.0 * risk,
+        "stop": structural_stop,
+        "target": target,
         "risk_per_share": risk,
-        "daily_sma20": sma20_value,
+        "daily_sma20": sma20,
         "daily_momentum_5d_pct": momentum_5d,
         "daily_momentum_20d_pct": momentum_20d,
         "daily_volume_ratio": volume_ratio,
