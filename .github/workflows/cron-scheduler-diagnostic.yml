@@ -1,0 +1,24 @@
+name: Cron Scheduler Diagnostic
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  prove-scheduler:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Show trigger details
+        run: |
+          echo "Event: ${{ github.event_name }}"
+          echo "Scheduled expression: ${{ github.event.schedule }}"
+          echo "UTC time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "London time: $(TZ=Europe/London date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "Default branch ref: $GITHUB_REF"
+          echo "Commit: $GITHUB_SHA"
