@@ -1,4 +1,4 @@
-# FILE_VERSION: FTSE350_0700_WATCHLIST_0805_BREAKOUT_2026_08_05
+# FILE_VERSION: FTSE350_0700_0805_WITH_INTRADAY_CANDLES_2026_08_08
 from __future__ import annotations
 
 import argparse
@@ -415,8 +415,20 @@ def assess(
         ),
     )
 
+    opening_candles = [
+        {
+            "open": float(row["Open"]),
+            "high": float(row["High"]),
+            "low": float(row["Low"]),
+            "close": float(row["Close"]),
+            "time": idx.strftime("%H:%M"),
+        }
+        for idx, row in opening.iterrows()
+    ]
+
     base.update(
         {
+            "opening_candles": opening_candles,
             "status": status,
             "recommendation": recommendation,
             "score": min(score, 100),
@@ -449,6 +461,71 @@ def money(value: Any) -> str:
     return f"£{gbx_to_gbp(float(value)):.2f}" if finite(value) else "—"
 
 
+def candlestick_svg(candles: list[dict[str, Any]]) -> str:
+    """Render a compact SVG candlestick chart from completed opening bars."""
+    if not candles:
+        return "<div class='mini-chart empty-chart'>No completed opening candles</div>"
+
+    width = 360
+    height = 120
+    pad_x = 18
+    pad_y = 12
+    prices = [
+        float(candle[key])
+        for candle in candles
+        for key in ("open", "high", "low", "close")
+        if finite(candle.get(key))
+    ]
+    if not prices:
+        return "<div class='mini-chart empty-chart'>No usable candle data</div>"
+
+    low_price = min(prices)
+    high_price = max(prices)
+    span = max(high_price - low_price, 1e-9)
+
+    def y(price: float) -> float:
+        usable = height - 2 * pad_y
+        return pad_y + ((high_price - price) / span) * usable
+
+    count = len(candles)
+    slot = (width - 2 * pad_x) / max(count, 1)
+    body_width = max(5.0, min(18.0, slot * 0.52))
+    parts = [
+        f'<svg class="mini-candles" viewBox="0 0 {width} {height}" '
+        f'role="img" aria-label="Opening candlestick chart">'
+    ]
+
+    for index, candle in enumerate(candles):
+        o = float(candle["open"])
+        h = float(candle["high"])
+        l = float(candle["low"])
+        c = float(candle["close"])
+        x = pad_x + slot * (index + 0.5)
+        bullish = c >= o
+        colour = BULL if bullish else BEAR
+        body_top = min(y(o), y(c))
+        body_bottom = max(y(o), y(c))
+        body_height = max(2.0, body_bottom - body_top)
+
+        parts.append(
+            f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{y(h):.1f}" y2="{y(l):.1f}" '
+            f'stroke="{colour}" stroke-width="1.4"/>'
+        )
+        parts.append(
+            f'<rect x="{x-body_width/2:.1f}" y="{body_top:.1f}" '
+            f'width="{body_width:.1f}" height="{body_height:.1f}" '
+            f'fill="{colour}" rx="1"/>'
+        )
+        if count <= 8:
+            parts.append(
+                f'<text x="{x:.1f}" y="{height-2:.1f}" text-anchor="middle" '
+                f'font-size="8" fill="{MUTED}">{html_lib.escape(str(candle["time"]))}</text>'
+            )
+
+    parts.append("</svg>")
+    return "".join(parts)
+
+
 def card(item: dict[str, Any], nap: bool = False) -> str:
     label = ("NAP — " if nap else "") + str(item["status"])
     direction_colour = BULL if item["direction"] == "Long" else BEAR
@@ -474,6 +551,7 @@ def card(item: dict[str, Any], nap: bool = False) -> str:
 <div class="pattern" style="color:{direction_colour}">{item['direction']} · {html_lib.escape(str(item.get('daily_pattern','')))}</div>
 </div><div class="score"><span style="color:{status_colour}">{html_lib.escape(label)}</span><strong>{item['score']:.0f}/100</strong></div></div>
 <p class="recommendation" data-original="{html_lib.escape(item['recommendation'], quote=True)}">{html_lib.escape(item['recommendation'])}</p>
+<div class="chart-wrap"><div class="chart-title">Opening price action</div>{candlestick_svg(item.get("opening_candles", []))}</div>
 <div class="metrics">
 <div><span>Latest completed price</span><strong>{money(item.get('current'))} at {item.get('current_time').strftime('%H:%M') if item.get('current_time') else '—'}</strong></div>
 <div><span>Entry trigger</span><strong>{money(item.get('trigger'))}</strong></div>
@@ -571,7 +649,7 @@ def build_html(
 h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:$SALMON;font-size:12px;text-transform:uppercase;letter-spacing:.09em}
 .time,.pattern,.name,.footer{color:$MUTED;font-size:12px}.decision,.pick,.rejected,.expired{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:15px;margin:14px 0}
 .decision strong{color:$BRASS}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}
-.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}
+.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.chart-wrap{margin:12px 0;background:#12161F;border:1px solid #2C333D;border-radius:7px;padding:10px}.chart-title{font-size:11px;color:#8B92A0;margin-bottom:5px}.mini-candles{width:100%;height:120px;display:block}.empty-chart{color:#8B92A0;font-size:12px;padding:20px;text-align:center}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}
 .metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:$INK;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}
 .metrics span{display:block;color:$MUTED;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:$BRASS;font-size:13px}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:$MUTED;font-size:12px;line-height:1.5}
