@@ -252,6 +252,13 @@ def news_html(item: dict[str, Any]) -> str:
 
 
 
+
+def finite_number(value: Any) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
 def daily_atr_from_history(ticker: str, period: int = 14) -> float | None:
     """Latest 14-day ATR in the same GBX units as London price data."""
     try:
