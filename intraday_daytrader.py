@@ -1,4 +1,4 @@
-# FILE_VERSION: FTSE350_0700_0805_WITH_INTRADAY_CANDLES_2026_08_08
+# FILE_VERSION: FTSE350_VOLATILITY_AWARE_RISK_2026_08_10
 from __future__ import annotations
 
 import argparse
@@ -50,6 +50,10 @@ MAX_VWAP_DISTANCE_PCT = env_float("MAX_VWAP_DISTANCE_PCT", 1.50)
 ENTRY_BUFFER_PCT = env_float("ENTRY_BUFFER_PCT", 0.04)
 MAX_ENTRY_EXTENSION_R = env_float("MAX_ENTRY_EXTENSION_R", 0.35)
 MIN_RECOMMENDATION_SCORE = env_float("MIN_ACTIONABLE_SCORE", 68)
+NEWS_COUNT = env_int("NEWS_COUNT", 3)
+ATR_STOP_MULTIPLIER = env_float("ATR_STOP_MULTIPLIER", 0.50)
+MIN_STOP_PCT = env_float("MIN_STOP_PCT", 0.75)
+MIN_BARS_FULL_CONFIDENCE = env_int("MIN_BARS_FULL_CONFIDENCE", 6)
 
 ROOT = Path(__file__).resolve().parent
 DAILY_INDEX_PATH = ROOT / "docs" / "index.html"
@@ -82,13 +86,19 @@ def now_london() -> dt.datetime:
 
 
 def scan_stage(now: dt.datetime) -> tuple[str, dt.time, int]:
-    """
-    Opening breakout scan using the first completed London-market five-minute bar.
-
-    The workflow is scheduled shortly after 08:05 so the 08:00-08:05 bar has
-    time to appear in the market-data feed.
-    """
-    return "08:05 OPENING BREAKOUT SCAN", dt.time(8, 5), 1
+    market_open = now.replace(hour=8, minute=0, second=0, microsecond=0)
+    completed = now.replace(second=0, microsecond=0) - dt.timedelta(minutes=now.minute % 5)
+    if completed <= market_open:
+        completed = market_open + dt.timedelta(minutes=5)
+    cap = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    completed = min(completed, cap)
+    expected_bars = max(1, int((completed - market_open).total_seconds() // 300))
+    return (
+        f"OPENING SESSION UPDATE — {expected_bars} completed 5-minute bar"
+        f"{'s' if expected_bars != 1 else ''}",
+        completed.time(),
+        expected_bars,
+    )
 
 
 def normalise(frame: pd.DataFrame) -> pd.DataFrame:
@@ -175,6 +185,118 @@ def prior_window_volume(
     return float(np.mean(totals)) if totals else None
 
 
+def recent_news(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    query = str(candidate.get("name") or candidate.get("epic") or "").strip()
+    if not query:
+        return []
+    try:
+        items = yf.Search(
+            query,
+            max_results=1,
+            news_count=max(NEWS_COUNT * 2, 6),
+            enable_fuzzy_query=False,
+            timeout=10,
+            raise_errors=False,
+        ).news or []
+    except Exception:
+        return []
+
+    output = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        content = raw.get("content") if isinstance(raw.get("content"), dict) else raw
+        title = str(content.get("title") or raw.get("title") or "").strip()
+        if not title:
+            continue
+        provider = content.get("provider") or raw.get("publisher") or ""
+        if isinstance(provider, dict):
+            publisher = str(provider.get("displayName") or provider.get("name") or "")
+        else:
+            publisher = str(provider)
+        url_obj = content.get("clickThroughUrl") or content.get("canonicalUrl")
+        if isinstance(url_obj, dict):
+            url = str(url_obj.get("url") or "")
+        else:
+            url = str(content.get("link") or raw.get("link") or raw.get("url") or "")
+        output.append({"title": title, "publisher": publisher, "url": url})
+        if len(output) >= NEWS_COUNT:
+            break
+    return output
+
+
+def news_html(item: dict[str, Any]) -> str:
+    items = item.get("news") or []
+    if not items:
+        return (
+            '<div class="news-box"><div class="news-heading">News context</div>'
+            '<div class="news-empty">No recent company-specific headline found.</div></div>'
+        )
+    rows = []
+    for news in items:
+        title = html_lib.escape(str(news.get("title", "")))
+        publisher = html_lib.escape(str(news.get("publisher", "")))
+        url = str(news.get("url", "")).strip()
+        if url.startswith(("http://", "https://")):
+            title_html = (
+                f'<a href="{html_lib.escape(url, quote=True)}" target="_blank" '
+                f'rel="noopener noreferrer">{title}</a>'
+            )
+        else:
+            title_html = title
+        rows.append(f'<li>{title_html}<div class="news-meta">{publisher}</div></li>')
+    return (
+        '<div class="news-box"><div class="news-heading">Recent news</div>'
+        f'<ul class="news-list">{"".join(rows)}</ul></div>'
+    )
+
+
+
+def daily_atr_from_history(ticker: str, period: int = 14) -> float | None:
+    """Latest 14-day ATR in the same GBX units as London price data."""
+    try:
+        daily = normalise(
+            yf.download(
+                ticker,
+                period="3mo",
+                interval="1d",
+                progress=False,
+                auto_adjust=False,
+                prepost=False,
+            )
+        )
+    except Exception:
+        return None
+
+    if daily.empty or len(daily) < period + 1:
+        return None
+
+    prev_close = daily["Close"].shift(1)
+    true_range = pd.concat(
+        [
+            daily["High"] - daily["Low"],
+            (daily["High"] - prev_close).abs(),
+            (daily["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+
+    atr = true_range.rolling(period).mean().iloc[-1]
+    return float(atr) if finite_number(atr) and float(atr) > 0 else None
+
+
+def confidence_cap_for_bars(bars: int) -> float:
+    """Do not present a one-candle observation as a 100/100 setup."""
+    if bars <= 1:
+        return 78.0
+    if bars == 2:
+        return 84.0
+    if bars == 3:
+        return 90.0
+    if bars < MIN_BARS_FULL_CONFIDENCE:
+        return 95.0
+    return 100.0
+
 def assess(
     candidate: dict[str, Any],
     now: dt.datetime,
@@ -184,6 +306,7 @@ def assess(
 ) -> dict[str, Any]:
     direction = str(candidate.get("direction", "")).title()
     ticker = str(candidate.get("yahoo_ticker") or f"{candidate['epic']}.L")
+    daily_atr = daily_atr_from_history(ticker)
     base = {
         "epic": candidate.get("epic", ticker.replace(".L", "")),
         "name": candidate.get("name", ""),
@@ -215,11 +338,15 @@ def assess(
         (today_frame.index.time >= dt.time(8, 0))
         & (today_frame.index.time < window_end)
     ]
+    trigger_window = today_frame[
+        (today_frame.index.time >= dt.time(8, 0))
+        & (today_frame.index.time < dt.time(8, 5))
+    ]
     bars = len(opening)
     base["bars"] = bars
 
     pc = prior_close(frame, today)
-    if opening.empty or pc is None or pc <= 0:
+    if opening.empty or trigger_window.empty or pc is None or pc <= 0:
         base["status"] = "DATA ONLY"
         base["failed"] = ["Previous close or opening data was unavailable."]
         return base
@@ -259,25 +386,44 @@ def assess(
     current = float(completed.iloc[-1]["Close"])
     current_time = completed.index[-1]
 
+    trigger_high = float(trigger_window["High"].max())
+    trigger_low = float(trigger_window["Low"].min())
+
     if direction == "Long":
-        trigger = high * (1 + ENTRY_BUFFER_PCT / 100)
-        stop = low
+        trigger = trigger_high * (1 + ENTRY_BUFFER_PCT / 100)
+        structure_stop = low
+        atr_stop_distance = (daily_atr or 0.0) * ATR_STOP_MULTIPLIER
+        minimum_stop_distance = trigger * MIN_STOP_PCT / 100
+        stop_distance = max(
+            trigger - structure_stop,
+            atr_stop_distance,
+            minimum_stop_distance,
+        )
+        stop = trigger - stop_distance
         initial_risk = trigger - stop
         maximum_entry = trigger + MAX_ENTRY_EXTENSION_R * initial_risk
-        risk = current - stop
-        target = current + TARGET_R * risk
+        risk = initial_risk
+        target = trigger + TARGET_R * initial_risk
         correct_side_previous_close = close > pc
         correct_side_vwap = close > vwap
         favourable_location = location_pct >= 58
         triggered = current >= trigger
         beyond_entry = current > maximum_entry
     else:
-        trigger = low * (1 - ENTRY_BUFFER_PCT / 100)
-        stop = high
+        trigger = trigger_low * (1 - ENTRY_BUFFER_PCT / 100)
+        structure_stop = high
+        atr_stop_distance = (daily_atr or 0.0) * ATR_STOP_MULTIPLIER
+        minimum_stop_distance = trigger * MIN_STOP_PCT / 100
+        stop_distance = max(
+            structure_stop - trigger,
+            atr_stop_distance,
+            minimum_stop_distance,
+        )
+        stop = trigger + stop_distance
         initial_risk = stop - trigger
         maximum_entry = trigger - MAX_ENTRY_EXTENSION_R * initial_risk
-        risk = stop - current
-        target = current - TARGET_R * risk
+        risk = initial_risk
+        target = trigger - TARGET_R * initial_risk
         correct_side_previous_close = close < pc
         correct_side_vwap = close < vwap
         favourable_location = location_pct <= 42
@@ -355,9 +501,17 @@ def assess(
     check(
         initial_risk > 0 and risk > 0,
         5,
-        "The opening-range stop structure was valid.",
+        "The volatility-aware stop structure was valid.",
         "The stop structure was invalid.",
     )
+
+    confidence_cap = confidence_cap_for_bars(bars)
+    if score > confidence_cap:
+        passed.append(
+            f"Confidence capped at {confidence_cap:.0f}/100 because only {bars} "
+            f"completed five-minute bar{'s' if bars != 1 else ''} were available."
+        )
+        score = confidence_cap
 
     mandatory_failure = (
         bars < expected_bars
@@ -415,6 +569,8 @@ def assess(
         ),
     )
 
+    news_items = recent_news(candidate)
+
     opening_candles = [
         {
             "open": float(row["Open"]),
@@ -429,9 +585,10 @@ def assess(
     base.update(
         {
             "opening_candles": opening_candles,
+            "news": news_items,
             "status": status,
             "recommendation": recommendation,
-            "score": min(score, 100),
+            "score": score,
             "passed": passed,
             "failed": failed,
             "previous_close": pc,
@@ -449,6 +606,11 @@ def assess(
             "maximum_entry": maximum_entry,
             "stop": stop,
             "target": target,
+            "daily_atr": daily_atr,
+            "stop_distance": initial_risk,
+            "atr_stop_distance": atr_stop_distance,
+            "minimum_stop_distance": minimum_stop_distance,
+            "structure_stop": structure_stop,
             "shares": shares,
             "position_value": shares * current_gbp,
             "planned_risk": shares * risk_gbp,
@@ -551,7 +713,8 @@ def card(item: dict[str, Any], nap: bool = False) -> str:
 <div class="pattern" style="color:{direction_colour}">{item['direction']} · {html_lib.escape(str(item.get('daily_pattern','')))}</div>
 </div><div class="score"><span style="color:{status_colour}">{html_lib.escape(label)}</span><strong>{item['score']:.0f}/100</strong></div></div>
 <p class="recommendation" data-original="{html_lib.escape(item['recommendation'], quote=True)}">{html_lib.escape(item['recommendation'])}</p>
-<div class="chart-wrap"><div class="chart-title">Opening price action</div>{candlestick_svg(item.get("opening_candles", []))}</div>
+<div class="chart-wrap"><div class="chart-title">Opening price action — all completed 5-minute bars</div>{candlestick_svg(item.get("opening_candles", []))}</div>
+{news_html(item)}
 <div class="metrics">
 <div><span>Latest completed price</span><strong>{money(item.get('current'))} at {item.get('current_time').strftime('%H:%M') if item.get('current_time') else '—'}</strong></div>
 <div><span>Entry trigger</span><strong>{money(item.get('trigger'))}</strong></div>
@@ -649,7 +812,7 @@ def build_html(
 h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:$SALMON;font-size:12px;text-transform:uppercase;letter-spacing:.09em}
 .time,.pattern,.name,.footer{color:$MUTED;font-size:12px}.decision,.pick,.rejected,.expired{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:15px;margin:14px 0}
 .decision strong{color:$BRASS}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}
-.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.chart-wrap{margin:12px 0;background:#12161F;border:1px solid #2C333D;border-radius:7px;padding:10px}.chart-title{font-size:11px;color:#8B92A0;margin-bottom:5px}.mini-candles{width:100%;height:120px;display:block}.empty-chart{color:#8B92A0;font-size:12px;padding:20px;text-align:center}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}
+.score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.chart-wrap{margin:12px 0;background:#12161F;border:1px solid #2C333D;border-radius:7px;padding:10px}.chart-title{font-size:11px;color:#8B92A0;margin-bottom:5px}.mini-candles{width:100%;height:150px;display:block}.empty-chart{color:#8B92A0;font-size:12px;padding:20px;text-align:center}.news-box{margin:12px 0;background:#12161F;border:1px solid #2C333D;border-radius:7px;padding:10px 12px}.news-heading{font-size:11px;color:#C9A24B;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}.news-list{margin:0;padding-left:18px}.news-list li{margin:5px 0;color:#ECE7DA;font-size:12px;line-height:1.35}.news-list a{color:#ECE7DA;text-decoration:none}.news-meta,.news-empty{font-size:10px;color:#8B92A0;margin-top:2px}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}
 .metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:$INK;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}
 .metrics span{display:block;color:$MUTED;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:$BRASS;font-size:13px}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}ul{padding-left:18px;color:$MUTED;font-size:12px;line-height:1.5}
@@ -661,7 +824,7 @@ h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:
 <div id="expired-content" class="expired"><h2>Past the 09:30 cutoff</h2><p>The opening setups below are retained for review only. Do not use their levels now.</p></div>
 <div id="live-content">$CARDS
 <details class="rejected"><summary>Other candidates assessed but not recommended</summary><ul>$REJECTED</ul></details></div>
-<p class="footer">The opening scan uses the first completed 08:00–08:05 five-minute bar. Longs require strength above the previous close and VWAP; shorts require weakness below both. ACTIONABLE means the opening-range trigger has broken without being chased. WAIT FOR BREAK is conditional and must not be entered early.</p>
+<p class="footer">The opening scan uses the first completed 08:00–08:05 five-minute bar. Longs require strength above the previous close and VWAP; shorts require weakness below both. Stops use the widest of price structure, 0.50× daily ATR and a 0.75% minimum distance; the 2R target is then calculated from trigger-to-stop risk. ACTIONABLE means the opening-range trigger has broken without being chased. WAIT FOR BREAK is conditional and must not be entered early.</p>
 </main><script>
 (function(){const expiry=new Date('$EXPIRY');const expired=document.getElementById('expired-content');
 function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){const original=el.dataset.original||el.textContent;el.dataset.original=original;el.textContent='PAST 09:30 — Do not follow this recommendation now. Original assessment: '+original;});}}
