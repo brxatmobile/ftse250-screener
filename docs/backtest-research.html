@@ -1,287 +1,55 @@
-<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FTSE 250 scoring research</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FTSE 350 · 30-day rank-1 strategy research</title>
 <style>
-:root{--ink:#12161f;--panel:#1b2129;--line:#303843;--paper:#ece7da;--muted:#9aa1ac;--gold:#c9a24b;--green:#5eb77c;--red:#dc6a5d}
-*{box-sizing:border-box} body{margin:0;background:var(--ink);color:var(--paper);font-family:Arial,sans-serif} .wrap{max-width:1120px;margin:auto;padding:22px 14px 50px}
-nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px} nav a{color:var(--paper);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:13px} nav a.active{color:var(--gold);border-color:var(--gold)}
-h1{margin:4px 0} .muted,.sub{color:var(--muted)} .sub{margin-bottom:18px;font-size:13px} .callout{border:1px solid var(--gold);background:var(--panel);padding:16px;border-radius:10px;margin:18px 0} .callout h2{margin:5px 0 8px} .eyebrow{color:var(--gold);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
-.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0} .stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px} .label{color:var(--muted);font-size:11px;text-transform:uppercase} .value{font-size:19px;margin-top:5px}
-.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:12px 0 22px} table{width:100%;border-collapse:collapse;min-width:900px;background:var(--panel)} th,td{padding:10px;border-bottom:1px solid var(--line);font-size:13px;text-align:right;white-space:nowrap} th:first-child,td:first-child{text-align:left} th{color:var(--muted);font-size:11px;text-transform:uppercase} .positive{color:var(--green)} .negative{color:var(--red)} .neutral{color:var(--muted)} .note{font-size:12px;line-height:1.5;color:var(--muted)}
-@media(max-width:650px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))} h1{font-size:24px}}
-</style></head><body><main class="wrap">
-<nav><a href="index.html">Daily screener</a><a href="backtest.html">Backtest</a><a class="active" href="backtest-research.html">Research</a><a href="intraday.html">Intraday</a></nav>
-<h1>Scoring-model research backtest</h1><div class="sub">Generated Sun 02 Aug 2026, 15:12 UTC · 2026-04-15 to 2026-07-30 · first 70% research / final 30% holdout</div>
+:root{--ink:#12161F;--panel:#1B2129;--line:#2C333D;--brass:#C9A24B;--salmon:#E8A493;--green:#4FAE73;--red:#D1594B;--paper:#ECE7DA;--muted:#8B92A0}
+*{box-sizing:border-box} body{margin:0;background:var(--ink);color:var(--paper);font-family:Arial,sans-serif}
+.wrap{max-width:1120px;margin:auto;padding:28px 18px 60px}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px} nav a{color:var(--paper);text-decoration:none;border:1px solid var(--line);padding:8px 12px;border-radius:999px;font-size:13px} nav a.active{color:var(--brass);border-color:var(--brass)}
+h1{font-size:28px;margin:5px 0} h2{font-size:18px;margin-top:26px} .sub,.note,.muted{color:var(--muted)} .sub{font-size:12px;line-height:1.55}
+.strategy{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px;margin:18px 0;line-height:1.6;font-size:13px} .strategy strong{color:var(--brass)}
+.grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:16px 0}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}
+.label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em} .value{font-size:20px;margin-top:5px}
+.table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin-top:14px}
+table{width:100%;border-collapse:collapse;min-width:1000px;background:var(--panel)} th,td{padding:9px 10px;border-bottom:1px solid var(--line);font-size:12px;text-align:right;white-space:nowrap} th{color:var(--muted);font-size:10px;text-transform:uppercase} th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2),th:nth-child(4),td:nth-child(4){text-align:left}
+.positive{color:var(--green)} .negative{color:var(--red)} .neutral{color:var(--muted)}
+@media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body><main class="wrap">
+<nav><a href="index.html">Pre-market</a><a href="intraday.html">Intraday</a><a href="backtest.html">Backtest</a><a class="active" href="backtest-research.html">Research</a></nav>
+<div class="sub">FTSE 350 ex trusts · current-strategy historical replay</div>
+<h1>£30 rank-1 strategy · last 30 trading days</h1>
+<div class="sub">Generated Tue 11 Aug 2026 · 09:20 BST</div>
+
+<div class="strategy"><strong>What this page tests:</strong> each day it recreates the rank-1 pre-market candidate using only the prior close's data, then waits for the current 15-minute opening-range breakout rules. If the trade confirms, £30 notional is entered at the confirming five-minute close. Full position exits at the displayed 2R target, stop, or the final bar before 09:30. Days with no qualifying breakout remain uninvested.</div>
+
 <div class="grid">
-<div class="stat"><div class="label">Signal days</div><div class="value">75</div></div>
-<div class="stat"><div class="label">Research days</div><div class="value">52</div></div>
-<div class="stat"><div class="label">Holdout days</div><div class="value">23</div></div>
-<div class="stat"><div class="label">Best holdout model</div><div class="value" style="font-size:15px">Trend + volume</div></div>
+<div class="stat"><div class="label">Trading days tested</div><div class="value">30</div></div>
+<div class="stat"><div class="label">Trades taken</div><div class="value">1</div></div>
+<div class="stat"><div class="label">No-trade / missed days</div><div class="value">29</div></div>
+<div class="stat"><div class="label">Win rate</div><div class="value">100.0%</div></div>
+<div class="stat"><div class="label">Net P/L</div><div class="value positive">£+0.89</div></div>
+<div class="stat"><div class="label">End value vs £30/day stake</div><div class="value">£30.89</div></div>
 </div>
 
-        <section class="callout">
-          <div class="eyebrow">Strongest measured factor for long candidates in the holdout period</div>
-          <h2>Volume ≥ 2.0× average</h2>
-          <p>Average improvement: <strong>+0.14R per candidate</strong>. Confidence: <strong>Low</strong>.</p>
-          <p class="muted">Factor present: 50 candidates at +0.26R average; absent: 722 candidates at +0.12R average.</p>
-        </section>
-<h2>Long-only model comparison: top five long candidates</h2>
-<div class="table-wrap"><table><thead><tr><th>Model</th><th>Full P/L</th><th>Full win</th><th>Full PF</th><th>Full DD</th><th>Research P/L</th><th>Holdout P/L</th><th>Holdout win</th><th>Holdout PF</th><th>vs current</th></tr></thead><tbody>
-        <tr>
-          <td><strong>Current score</strong></td>
-          <td>£+1.22</td><td>46.3%</td><td>1.02</td><td>£9.19</td>
-          <td>£-4.40</td>
-          <td>£+5.62</td><td>47.7%</td><td>1.33</td>
-          <td class="neutral">£+0.00</td>
-        </tr>
-        <tr>
-          <td><strong>Pattern weighted</strong></td>
-          <td>£-2.34</td><td>45.0%</td><td>0.96</td><td>£9.26</td>
-          <td>£-4.43</td>
-          <td>£+2.09</td><td>47.2%</td><td>1.12</td>
-          <td class="negative">£-3.53</td>
-        </tr>
-        <tr>
-          <td><strong>RSI weighted</strong></td>
-          <td>£-10.37</td><td>44.7%</td><td>0.84</td><td>£14.68</td>
-          <td>£-10.62</td>
-          <td>£+0.25</td><td>42.3%</td><td>1.01</td>
-          <td class="negative">£-5.36</td>
-        </tr>
-        <tr>
-          <td><strong>Trend weighted</strong></td>
-          <td>£-0.57</td><td>45.2%</td><td>0.99</td><td>£9.44</td>
-          <td>£-6.26</td>
-          <td>£+5.69</td><td>47.7%</td><td>1.33</td>
-          <td class="positive">£+0.07</td>
-        </tr>
-        <tr>
-          <td><strong>Volume weighted</strong></td>
-          <td>£+1.74</td><td>45.8%</td><td>1.03</td><td>£10.00</td>
-          <td>£-6.11</td>
-          <td>£+7.85</td><td>47.7%</td><td>1.49</td>
-          <td class="positive">£+2.24</td>
-        </tr>
-        <tr>
-          <td><strong>Trend + volume</strong></td>
-          <td>£-2.98</td><td>44.6%</td><td>0.95</td><td>£13.22</td>
-          <td>£-12.02</td>
-          <td>£+9.04</td><td>48.6%</td><td>1.59</td>
-          <td class="positive">£+3.43</td>
-        </tr></tbody></table></div>
-<h2>Rank and direction breakdown — holdout period</h2>
-<div class="table-wrap"><table><thead><tr><th>Model</th><th>Selection</th><th>Signals</th><th>Executed</th><th>Wins</th><th>Win rate</th><th>P/L</th><th>Average R</th><th>PF</th><th>Drawdown</th></tr></thead><tbody>
-            <tr class="">
-              <td><strong>Current score</strong></td>
-              <td>Rank 1 long</td>
-              <td>23</td><td>20</td><td>11</td>
-              <td>55.0%</td><td>£+1.25</td>
-              <td>+0.33R</td><td>1.35</td>
-              <td>£2.00</td>
-            </tr>
-            <tr class="">
-              <td><strong>Current score</strong></td>
-              <td>Ranks 2–5 long</td>
-              <td>92</td><td>87</td><td>40</td>
-              <td>46.0%</td><td>£+4.37</td>
-              <td>+0.07R</td><td>1.32</td>
-              <td>£5.04</td>
-            </tr>
-            <tr class="">
-              <td><strong>Current score</strong></td>
-              <td>Top 5 long</td>
-              <td>115</td><td>107</td><td>51</td>
-              <td>47.7%</td><td>£+5.62</td>
-              <td>+0.12R</td><td>1.33</td>
-              <td>£5.38</td>
-            </tr>
-            <tr class="">
-              <td><strong>Current score</strong></td>
-              <td>Top 5 short — research only</td>
-              <td>115</td><td>107</td><td>39</td>
-              <td>36.4%</td><td>£-8.44</td>
-              <td>+0.05R</td><td>0.62</td>
-              <td>£10.65</td>
-            </tr>
-            <tr class="">
-              <td><strong>Pattern weighted</strong></td>
-              <td>Rank 1 long</td>
-              <td>23</td><td>20</td><td>11</td>
-              <td>55.0%</td><td>£+4.05</td>
-              <td>+0.34R</td><td>2.27</td>
-              <td>£1.66</td>
-            </tr>
-            <tr class="">
-              <td><strong>Pattern weighted</strong></td>
-              <td>Ranks 2–5 long</td>
-              <td>92</td><td>88</td><td>40</td>
-              <td>45.5%</td><td>£-1.97</td>
-              <td>+0.02R</td><td>0.87</td>
-              <td>£3.93</td>
-            </tr>
-            <tr class="">
-              <td><strong>Pattern weighted</strong></td>
-              <td>Top 5 long</td>
-              <td>115</td><td>108</td><td>51</td>
-              <td>47.2%</td><td>£+2.09</td>
-              <td>+0.08R</td><td>1.12</td>
-              <td>£4.99</td>
-            </tr>
-            <tr class="">
-              <td><strong>Pattern weighted</strong></td>
-              <td>Top 5 short — research only</td>
-              <td>115</td><td>103</td><td>37</td>
-              <td>35.9%</td><td>£-9.50</td>
-              <td>+0.04R</td><td>0.57</td>
-              <td>£12.09</td>
-            </tr>
-            <tr class="">
-              <td><strong>RSI weighted</strong></td>
-              <td>Rank 1 long</td>
-              <td>23</td><td>21</td><td>9</td>
-              <td>42.9%</td><td>£+2.81</td>
-              <td>+0.39R</td><td>1.57</td>
-              <td>£2.00</td>
-            </tr>
-            <tr class="">
-              <td><strong>RSI weighted</strong></td>
-              <td>Ranks 2–5 long</td>
-              <td>92</td><td>90</td><td>38</td>
-              <td>42.2%</td><td>£-2.56</td>
-              <td>+0.09R</td><td>0.82</td>
-              <td>£6.70</td>
-            </tr>
-            <tr class="">
-              <td><strong>RSI weighted</strong></td>
-              <td>Top 5 long</td>
-              <td>115</td><td>111</td><td>47</td>
-              <td>42.3%</td><td>£+0.25</td>
-              <td>+0.14R</td><td>1.01</td>
-              <td>£6.21</td>
-            </tr>
-            <tr class="">
-              <td><strong>RSI weighted</strong></td>
-              <td>Top 5 short — research only</td>
-              <td>115</td><td>105</td><td>34</td>
-              <td>32.4%</td><td>£-7.77</td>
-              <td>+0.00R</td><td>0.64</td>
-              <td>£12.12</td>
-            </tr>
-            <tr class="">
-              <td><strong>Trend weighted</strong></td>
-              <td>Rank 1 long</td>
-              <td>23</td><td>20</td><td>11</td>
-              <td>55.0%</td><td>£+1.47</td>
-              <td>+0.28R</td><td>1.48</td>
-              <td>£1.65</td>
-            </tr>
-            <tr class="">
-              <td><strong>Trend weighted</strong></td>
-              <td>Ranks 2–5 long</td>
-              <td>92</td><td>87</td><td>40</td>
-              <td>46.0%</td><td>£+4.22</td>
-              <td>+0.08R</td><td>1.30</td>
-              <td>£4.81</td>
-            </tr>
-            <tr class="">
-              <td><strong>Trend weighted</strong></td>
-              <td>Top 5 long</td>
-              <td>115</td><td>107</td><td>51</td>
-              <td>47.7%</td><td>£+5.69</td>
-              <td>+0.12R</td><td>1.33</td>
-              <td>£5.15</td>
-            </tr>
-            <tr class="">
-              <td><strong>Trend weighted</strong></td>
-              <td>Top 5 short — research only</td>
-              <td>115</td><td>103</td><td>37</td>
-              <td>35.9%</td><td>£-10.30</td>
-              <td>+0.01R</td><td>0.52</td>
-              <td>£10.74</td>
-            </tr>
-            <tr class="">
-              <td><strong>Volume weighted</strong></td>
-              <td>Rank 1 long</td>
-              <td>23</td><td>21</td><td>11</td>
-              <td>52.4%</td><td>£+1.73</td>
-              <td>+0.36R</td><td>1.60</td>
-              <td>£1.52</td>
-            </tr>
-            <tr class="">
-              <td><strong>Volume weighted</strong></td>
-              <td>Ranks 2–5 long</td>
-              <td>92</td><td>86</td><td>40</td>
-              <td>46.5%</td><td>£+6.13</td>
-              <td>+0.10R</td><td>1.47</td>
-              <td>£3.61</td>
-            </tr>
-            <tr class="">
-              <td><strong>Volume weighted</strong></td>
-              <td>Top 5 long</td>
-              <td>115</td><td>107</td><td>51</td>
-              <td>47.7%</td><td>£+7.85</td>
-              <td>+0.15R</td><td>1.49</td>
-              <td>£4.05</td>
-            </tr>
-            <tr class="">
-              <td><strong>Volume weighted</strong></td>
-              <td>Top 5 short — research only</td>
-              <td>115</td><td>99</td><td>36</td>
-              <td>36.4%</td><td>£-5.29</td>
-              <td>+0.04R</td><td>0.75</td>
-              <td>£10.00</td>
-            </tr>
-            <tr class="">
-              <td><strong>Trend + volume</strong></td>
-              <td>Rank 1 long</td>
-              <td>23</td><td>21</td><td>11</td>
-              <td>52.4%</td><td>£+1.91</td>
-              <td>+0.37R</td><td>1.79</td>
-              <td>£1.17</td>
-            </tr>
-            <tr class="">
-              <td><strong>Trend + volume</strong></td>
-              <td>Ranks 2–5 long</td>
-              <td>92</td><td>86</td><td>41</td>
-              <td>47.7%</td><td>£+7.13</td>
-              <td>+0.13R</td><td>1.56</td>
-              <td>£3.38</td>
-            </tr>
-            <tr class="">
-              <td><strong>Trend + volume</strong></td>
-              <td>Top 5 long</td>
-              <td>115</td><td>107</td><td>52</td>
-              <td>48.6%</td><td>£+9.04</td>
-              <td>+0.18R</td><td>1.59</td>
-              <td>£3.82</td>
-            </tr>
-            <tr class="">
-              <td><strong>Trend + volume</strong></td>
-              <td>Top 5 short — research only</td>
-              <td>115</td><td>103</td><td>38</td>
-              <td>36.9%</td><td>£-9.83</td>
-              <td>+0.02R</td><td>0.56</td>
-              <td>£11.24</td>
-            </tr></tbody></table></div>
-<h2>Long-only holdout factor evidence</h2>
-<div class="table-wrap"><table><thead><tr><th>Factor</th><th>Present n</th><th>Present avg</th><th>Absent avg</th><th>Effect</th><th>95% bootstrap interval</th><th>Confidence</th></tr></thead><tbody>
-        <tr><td>Volume ≥ 2.0× average</td><td>50</td>
-        <td>+0.26R</td><td>+0.12R</td>
-        <td>+0.14R</td><td>-0.06R to +0.36R</td><td>Low</td></tr>
-        <tr><td>Strong pattern (base ≥ 7)</td><td>493</td>
-        <td>+0.17R</td><td>+0.06R</td>
-        <td>+0.11R</td><td>-0.01R to +0.23R</td><td>Low</td></tr>
-        <tr><td>Volume ≥ 1.5× average</td><td>100</td>
-        <td>+0.14R</td><td>+0.13R</td>
-        <td>+0.01R</td><td>-0.14R to +0.17R</td><td>Low</td></tr>
-        <tr><td>Supportive RSI</td><td>377</td>
-        <td>+0.12R</td><td>+0.14R</td>
-        <td>-0.02R</td><td>-0.13R to +0.09R</td><td>No positive evidence</td></tr>
-        <tr><td>Extreme RSI</td><td>53</td>
-        <td>+0.10R</td><td>+0.13R</td>
-        <td>-0.03R</td><td>-0.27R to +0.22R</td><td>No positive evidence</td></tr>
-        <tr><td>SMA20 trend alignment</td><td>543</td>
-        <td>+0.12R</td><td>+0.16R</td>
-        <td>-0.04R</td><td>-0.17R to +0.09R</td><td>No positive evidence</td></tr></tbody></table></div>
-<p class="note">Headline model results use the five highest-ranked long candidates each day. “Rank 1 long” means the highest-scoring long candidate, even when a short candidate ranks above it overall. Short signals remain in a separate research row and do not affect long-only win rate, P/L or profit factor. Entry, stop, target, spread, commission and same-day exit rules remain identical. Daily bars cannot determine which occurred first when stop and target are both touched; those cases are scored as stops.</p>
+<div class="grid">
+<div class="stat"><div class="label">Winning trades</div><div class="value">1</div></div>
+<div class="stat"><div class="label">Losing trades</div><div class="value">0</div></div>
+<div class="stat"><div class="label">Profit factor</div><div class="value">∞</div></div>
+<div class="stat"><div class="label">Max drawdown</div><div class="value negative">£0.00</div></div>
+<div class="stat"><div class="label">Stake per trade</div><div class="value">£30</div></div>
+<div class="stat"><div class="label">Cost assumption</div><div class="value">20 bps</div></div>
+</div>
+
+<h2>Daily replay</h2>
+<div class="table-wrap"><table><thead><tr>
+<th>Date</th><th>Rank-1 stock</th><th>Bias</th><th>Outcome</th><th>Entry</th><th>Stop</th><th>2R</th><th>Exit</th><th>Net £</th><th>Return</th><th>Cumulative £</th>
+</tr></thead><tbody><tr><td>10 Aug 2026</td><td><strong>WPP</strong><br><span class='muted'>WPP</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£4.01</td><td>£4.36</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>07 Aug 2026</td><td><strong>WPP</strong><br><span class='muted'>WPP</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>—</td><td>—</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>06 Aug 2026</td><td><strong>HOC</strong><br><span class='muted'>Hochschild</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£4.74</td><td>£5.12</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>05 Aug 2026</td><td><strong>RTO</strong><br><span class='muted'>Rentokil Initial</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£3.79</td><td>£3.50</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>04 Aug 2026</td><td><strong>RTO</strong><br><span class='muted'>Rentokil Initial</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£3.66</td><td>£3.38</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>03 Aug 2026</td><td><strong>RTO</strong><br><span class='muted'>Rentokil Initial</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£3.39</td><td>£3.10</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>31 Jul 2026</td><td><strong>RTO</strong><br><span class='muted'>Rentokil Initial</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£3.64</td><td>£3.38</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>30 Jul 2026</td><td><strong>MGNS</strong><br><span class='muted'>Morgan Sindall Group</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>—</td><td>—</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>29 Jul 2026</td><td><strong>VSVS</strong><br><span class='muted'>Vesuvius</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£3.79</td><td>£3.52</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>28 Jul 2026</td><td><strong>BA</strong><br><span class='muted'>BAE Systems</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£19.90</td><td>£21.33</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>27 Jul 2026</td><td><strong>MTO</strong><br><span class='muted'>Mitie</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£2.06</td><td>£2.18</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>24 Jul 2026</td><td><strong>CHG</strong><br><span class='muted'>Chemring</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£5.92</td><td>£6.30</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>23 Jul 2026</td><td><strong>CHG</strong><br><span class='muted'>Chemring</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£5.91</td><td>£6.33</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>22 Jul 2026</td><td><strong>MTO</strong><br><span class='muted'>Mitie</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£2.06</td><td>£2.19</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>21 Jul 2026</td><td><strong>ROR</strong><br><span class='muted'>Rotork</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£4.76</td><td>£5.05</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>20 Jul 2026</td><td><strong>ANTO</strong><br><span class='muted'>Antofagasta</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£35.22</td><td>£32.73</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>17 Jul 2026</td><td><strong>ROR</strong><br><span class='muted'>Rotork</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£4.76</td><td>£5.06</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>16 Jul 2026</td><td><strong>PLUS</strong><br><span class='muted'>Plus500</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£42.94</td><td>£39.34</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>15 Jul 2026</td><td><strong>EZJ</strong><br><span class='muted'>easyJet</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£6.61</td><td>£7.11</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>14 Jul 2026</td><td><strong>PLUS</strong><br><span class='muted'>Plus500</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£42.86</td><td>£39.33</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>13 Jul 2026</td><td><strong>EZJ</strong><br><span class='muted'>easyJet</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£6.57</td><td>£7.12</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>10 Jul 2026</td><td><strong>HLMA</strong><br><span class='muted'>Halma</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£36.79</td><td>£35.09</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>09 Jul 2026</td><td><strong>BCG</strong><br><span class='muted'>Baltic Classifieds Group</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£1.81</td><td>£1.66</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>08 Jul 2026</td><td><strong>KLR</strong><br><span class='muted'>Keller</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£32.38</td><td>£36.02</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>07 Jul 2026</td><td><strong>EZJ</strong><br><span class='muted'>easyJet</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£6.03</td><td>£6.48</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>06 Jul 2026</td><td><strong>BCG</strong><br><span class='muted'>Baltic Classifieds Group</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£1.77</td><td>£1.54</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>03 Jul 2026</td><td><strong>CHG</strong><br><span class='muted'>Chemring</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>—</td><td>—</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.89</td></tr><tr><td>02 Jul 2026</td><td><strong>CMCX</strong><br><span class='muted'>CMC Markets</span></td><td>Long</td><td>TIME EXIT</td><td>£6.79</td><td>£6.46</td><td>£7.40</td><td>£7.00</td><td class='positive'>+0.89</td><td class='positive'>+2.97%</td><td>+0.89</td></tr><tr><td>01 Jul 2026</td><td><strong>EZJ</strong><br><span class='muted'>easyJet</span></td><td>Long</td><td>NO TRADE</td><td>—</td><td>£5.49</td><td>£5.93</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.00</td></tr><tr><td>30 Jun 2026</td><td><strong>BAB</strong><br><span class='muted'>Babcock</span></td><td>Short</td><td>NO TRADE</td><td>—</td><td>£9.35</td><td>£8.78</td><td>—</td><td class='neutral'>+0.00</td><td class='neutral'>+0.00%</td><td>+0.00</td></tr></tbody></table></div>
+
+<p class="note"><strong>Historical-news limitation:</strong> this replay deliberately does not use archived news sentiment because Yahoo's current headline search is not a reliable point-in-time archive. That prevents look-ahead bias. Historical entries therefore represent the technical B-grade form of the live strategy; the live page may upgrade a setup to A when a genuinely supportive current catalyst is present.</p>
+<p class="note">This is a mechanical research replay, not a prediction. Five-minute bars still cannot show the exact sequence of prices inside each candle; where a single candle touches both stop and target, the research assumes the stop occurred first.</p>
 </main></body></html>
