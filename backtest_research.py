@@ -1,6 +1,6 @@
-# FILE_VERSION: FTSE350_ORB_RANK1_30DAY_OPPOSITE_DIRECTION_RESEARCH_2026_08_11
+# FILE_VERSION: FTSE350_ORB_RANK1_30DAY_RESEARCH_2026_08_11
 """
-Historical opposite-direction research page for the live FTSE 350 day-trading strategy.
+Historical research page for the live FTSE 350 day-trading strategy.
 
 What it tests
 -------------
@@ -10,8 +10,7 @@ For each of the last 30 completed London trading sessions:
 2. Rebuild the same liquid long/short watchlist used by screener.py via
    build_intraday_candidate().
 3. Select rank 1 only.
-4. Reverse its live direction: LONG becomes SHORT and SHORT becomes LONG.
-5. On the next session, establish the 08:00-08:15 opening range.
+4. On the next session, establish the 08:00-08:15 opening range.
 5. From 08:15 to 09:30, replay the current technical decision rules:
       - correct side of previous close
       - correct side of VWAP
@@ -235,15 +234,13 @@ def simulate_day(
 ) -> dict[str, Any]:
     epic = str(candidate["epic"])
     name = str(candidate["name"])
-    original_direction = str(candidate["direction"]).title()
-    direction = "Short" if original_direction == "Long" else "Long"
+    direction = str(candidate["direction"]).title()
 
     result: dict[str, Any] = {
         "date": trade_date,
         "signal_date": signal_date,
         "epic": epic,
         "name": name,
-        "original_direction": original_direction,
         "direction": direction,
         "watch_score": float(candidate.get("score", 0) or 0),
         "status": "NO TRADE",
@@ -425,7 +422,7 @@ def simulate_day(
     result.update(
         {
             "status": outcome,
-            "reason": "Opposite-direction trade confirmed using the same technical rules.",
+            "reason": "Trade confirmed under the current technical strategy.",
             "exit": exit_price,
             "gross_pnl": gross,
             "cost": cost,
@@ -472,7 +469,6 @@ def render(results: list[dict[str, Any]], generated: str) -> str:
             "<tr>"
             f"<td>{r['date'].strftime('%d %b %Y')}</td>"
             f"<td><strong>{html_lib.escape(r['epic'])}</strong><br><span class='muted'>{html_lib.escape(r['name'])}</span></td>"
-            f"<td>{html_lib.escape(r.get('original_direction', '—'))}</td>"
             f"<td>{html_lib.escape(r['direction'])}</td>"
             f"<td>{html_lib.escape(r['status'])}</td>"
             f"<td>{'£'+format(gbx_to_gbp(r['entry']), '.2f') if r['entry'] is not None else '—'}</td>"
@@ -491,7 +487,7 @@ def render(results: list[dict[str, Any]], generated: str) -> str:
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FTSE 350 · 30-day rank-1 opposite-direction research</title>
+<title>FTSE 350 · 30-day rank-1 strategy research</title>
 <style>
 :root{{--ink:{INK};--panel:{PANEL};--line:{HAIRLINE};--brass:{BRASS};--salmon:{SALMON};--green:{BULL};--red:{BEAR};--paper:{PAPER};--muted:{MUTED}}}
 *{{box-sizing:border-box}} body{{margin:0;background:var(--ink);color:var(--paper);font-family:Arial,sans-serif}}
@@ -503,18 +499,18 @@ h1{{font-size:28px;margin:5px 0}} h2{{font-size:18px;margin-top:26px}} .sub,.not
 .stat{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}}
 .label{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}} .value{{font-size:20px;margin-top:5px}}
 .table-wrap{{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin-top:14px}}
-table{{width:100%;border-collapse:collapse;min-width:1000px;background:var(--panel)}} th,td{{padding:9px 10px;border-bottom:1px solid var(--line);font-size:12px;text-align:right;white-space:nowrap}} th{{color:var(--muted);font-size:10px;text-transform:uppercase}} th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2),th:nth-child(5),td:nth-child(5){{text-align:left}}
+table{{width:100%;border-collapse:collapse;min-width:1000px;background:var(--panel)}} th,td{{padding:9px 10px;border-bottom:1px solid var(--line);font-size:12px;text-align:right;white-space:nowrap}} th{{color:var(--muted);font-size:10px;text-transform:uppercase}} th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2),th:nth-child(4),td:nth-child(4){{text-align:left}}
 .positive{{color:var(--green)}} .negative{{color:var(--red)}} .neutral{{color:var(--muted)}}
 @media(max-width:800px){{.grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 </style>
 </head>
 <body><main class="wrap">
 <nav><a href="index.html">Pre-market</a><a href="intraday.html">Intraday</a><a href="backtest.html">Backtest</a><a class="active" href="backtest-research.html">Research</a></nav>
-<div class="sub">FTSE 350 ex trusts · opposite-direction historical replay</div>
-<h1>£30 rank-1 opposite-direction strategy · last 30 trading days</h1>
+<div class="sub">FTSE 350 ex trusts · current-strategy historical replay</div>
+<h1>£30 rank-1 strategy · last 30 trading days</h1>
 <div class="sub">Generated {generated}</div>
 
-<div class="strategy"><strong>What this page tests:</strong> each day it recreates the same rank-1 pre-market candidate using only the prior close's data, but then deliberately trades the opposite direction. A live LONG candidate is tested as SHORT and a live SHORT candidate is tested as LONG. The same 15-minute opening-range, VWAP, volume, liquidity, stop and 2R rules are then applied in that inverted direction. If the opposite trade confirms, £30 notional is entered at the confirming five-minute close. Days with no qualifying opposite-direction breakout remain uninvested.</div>
+<div class="strategy"><strong>What this page tests:</strong> each day it recreates the rank-1 pre-market candidate using only the prior close's data, then waits for the current 15-minute opening-range breakout rules. If the trade confirms, £30 notional is entered at the confirming five-minute close. Full position exits at the displayed 2R target, stop, or the final bar before 09:30. Days with no qualifying breakout remain uninvested.</div>
 
 <div class="grid">
 <div class="stat"><div class="label">Trading days tested</div><div class="value">{len(results)}</div></div>
@@ -536,10 +532,10 @@ table{{width:100%;border-collapse:collapse;min-width:1000px;background:var(--pan
 
 <h2>Daily replay</h2>
 <div class="table-wrap"><table><thead><tr>
-<th>Date</th><th>Rank-1 stock</th><th>Live bias</th><th>Opposite trade</th><th>Outcome</th><th>Entry</th><th>Stop</th><th>2R</th><th>Exit</th><th>Net £</th><th>Return</th><th>Cumulative £</th>
+<th>Date</th><th>Rank-1 stock</th><th>Bias</th><th>Outcome</th><th>Entry</th><th>Stop</th><th>2R</th><th>Exit</th><th>Net £</th><th>Return</th><th>Cumulative £</th>
 </tr></thead><tbody>{''.join(rows)}</tbody></table></div>
 
-<p class="note"><strong>Historical-news limitation:</strong> this replay deliberately does not use archived news sentiment because Yahoo's current headline search is not a reliable point-in-time archive. That prevents look-ahead bias. Historical entries therefore represent the technical B-grade form of this opposite-direction comparison; the live page may upgrade a setup to A when a genuinely supportive current catalyst is present.</p>
+<p class="note"><strong>Historical-news limitation:</strong> this replay deliberately does not use archived news sentiment because Yahoo's current headline search is not a reliable point-in-time archive. That prevents look-ahead bias. Historical entries therefore represent the technical B-grade form of the live strategy; the live page may upgrade a setup to A when a genuinely supportive current catalyst is present.</p>
 <p class="note">This is a mechanical research replay, not a prediction. Five-minute bars still cannot show the exact sequence of prices inside each candle; where a single candle touches both stop and target, the research assumes the stop occurred first.</p>
 </main></body></html>"""
 
@@ -646,7 +642,6 @@ def main() -> int:
                     "signal_date": signal_date,
                     "epic": "—",
                     "name": "No pre-market candidate",
-                    "original_direction": "—",
                     "direction": "—",
                     "watch_score": 0,
                     "status": "NO TRADE",
@@ -664,8 +659,7 @@ def main() -> int:
             )
             continue
 
-        opposite = "Short" if pick["direction"] == "Long" else "Long"
-        print(f"Replaying {trade_date}: {pick['epic']} live={pick['direction']} opposite={opposite}...")
+        print(f"Replaying {trade_date}: {pick['epic']} {pick['direction']}...")
         results.append(
             simulate_day(
                 pick,
