@@ -1,4 +1,4 @@
-name: FTSE Scoring Research Backtest
+name: FTSE 30-Day Strategy Research
 
 on:
   workflow_dispatch:
@@ -13,19 +13,17 @@ concurrency:
 jobs:
   build-research-report:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Confirm research files
+      - name: Confirm current research script
         run: |
-          pwd
-          ls -la
           test -f backtest_research.py
-          grep -q "BACKTEST_RESEARCH_LONG_ONLY_RANK1_OUTPUT_FIX_2026_08_02" backtest_research.py
-          echo "Correct rank-1 long research script found"
+          grep -q "FTSE350_ORB_RANK1_30DAY_RESEARCH_2026_08_11" backtest_research.py
+          echo "Current 30-day opening-range research script found"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,30 +40,25 @@ jobs:
             pip install pandas numpy requests yfinance
           fi
 
-      - name: Run rank-1 long research backtest
+      - name: Run 30-day rank-1 strategy research
         env:
-          CAPITAL: ${{ vars.CAPITAL }}
-          RISK_PCT: ${{ vars.RISK_PCT }}
-          BACKTEST_DAYS: ${{ vars.BACKTEST_DAYS }}
           SPREAD_BPS: ${{ vars.SPREAD_BPS }}
           COMMISSION_PER_TRADE: ${{ vars.COMMISSION_PER_TRADE }}
         run: |
           python -u ./backtest_research.py
-          echo "Files created under docs:"
-          find docs -maxdepth 1 -type f -printf '%f\n' | sort
 
-      - name: Verify rank-1 research output
+      - name: Verify research output
         run: |
           test -s docs/backtest-research.html
-          grep -q "Scoring-model research backtest" docs/backtest-research.html
-          grep -q "Rank 1 long" docs/backtest-research.html
-          grep -q "Top 5 short" docs/backtest-research.html
-          echo "Rank-1 long research report verified"
+          grep -q "£30 rank-1 strategy" docs/backtest-research.html
+          grep -q "15-minute opening-range" docs/backtest-research.html
+          grep -q "Daily replay" docs/backtest-research.html
+          echo "30-day research report verified"
 
       - name: Publish research page
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/backtest-research.html
-          git commit -m "Update rank-1 long FTSE research report" || echo "No research report changes"
+          git commit -m "Update 30-day rank-1 strategy research" || echo "No research report changes"
           git push
