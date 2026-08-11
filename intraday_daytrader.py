@@ -748,7 +748,14 @@ def build_html(
     )[:MAX_RECOMMENDATIONS]
 
     rejected = [row for row in results if row not in recommended]
-    rejected.sort(key=lambda row: row["score"], reverse=True)
+    rejected.sort(
+        key=lambda row: (
+            priority.get(row.get("status", ""), 0),
+            grade_rank.get(row.get("grade", ""), 0),
+            float(row.get("daily_score", 0) or 0),
+        ),
+        reverse=True,
+    )
 
     actionable = [row for row in recommended if str(row.get("status","")).startswith("ENTER ")]
     waiting = [row for row in recommended if row.get("status") == "READY — WAIT FOR BREAK"]
@@ -876,11 +883,30 @@ def main() -> int:
     )
     print(f"Wrote {OUTPUT_PATH}")
 
-    for row in sorted(results, key=lambda value: value["score"], reverse=True):
+    priority = {
+        "ENTER LONG": 5,
+        "ENTER SHORT": 5,
+        "READY — WAIT FOR BREAK": 4,
+        "WATCH": 2,
+        "DON'T CHASE": 1,
+        "FAILED SETUP": 0,
+        "NO TRADE": 0,
+        "DATA ONLY": 0,
+    }
+    grade_rank = {"A": 3, "B": 2, "WATCH": 1, "MISSED": 0, "NO TRADE": 0, "DATA ONLY": 0}
+    for row in sorted(
+        results,
+        key=lambda value: (
+            priority.get(value.get("status", ""), 0),
+            grade_rank.get(value.get("grade", ""), 0),
+            float(value.get("daily_score", 0) or 0),
+        ),
+        reverse=True,
+    ):
         print(
-            f"{row['epic']:<7} {row['direction']:<5} "
-            f"{row['status']:<15} {row['score']:>5.1f} "
-            f"{row['recommendation']}"
+            f"{row.get('epic',''):<7} {row.get('direction',''):<5} "
+            f"{row.get('status',''):<22} {row.get('grade',''):<8} "
+            f"{row.get('recommendation','')}"
         )
     return 0
 
