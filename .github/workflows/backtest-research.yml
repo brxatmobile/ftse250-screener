@@ -1,4 +1,4 @@
-name: FTSE 30-Day Opposite Strategy Research
+name: FTSE 30-Day Strategy Research
 
 on:
   workflow_dispatch:
@@ -16,38 +16,14 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Check out main branch
+      - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: main
-          fetch-depth: 1
 
-      - name: Confirm checked-out files and research script
-        shell: bash
+      - name: Confirm current research script
         run: |
-          echo "Working directory:"
-          pwd
-          echo
-          echo "Checked-out branch / commit:"
-          git branch --show-current
-          git rev-parse HEAD
-          git log -1 --oneline
-          echo
-          echo "Repository root files:"
-          find . -maxdepth 1 -type f -printf '%f\n' | sort
-          echo
-          echo "Research files found anywhere in checkout:"
-          find . -maxdepth 3 -type f \( -iname 'backtest_research.py' -o -iname 'backtest-research.py' \) -print
-          echo
-
-          if [ ! -f "./backtest_research.py" ]; then
-            echo "ERROR: ./backtest_research.py is not present in the checked-out main branch."
-            echo "The workflow is running commit $(git rev-parse HEAD)."
-            exit 1
-          fi
-
-          grep -q "FTSE350_ORB_RANK1_30DAY_OPPOSITE_DIRECTION_RESEARCH_2026_08_11" ./backtest_research.py
-          echo "Correct opposite-direction 30-day research script found."
+          test -f backtest_research.py
+          grep -q "FTSE350_ORB_RANK1_30DAY_RESEARCH_2026_08_11" backtest_research.py
+          echo "Current 30-day opening-range research script found"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -64,7 +40,7 @@ jobs:
             pip install pandas numpy requests yfinance
           fi
 
-      - name: Run opposite-direction 30-day rank-1 strategy research
+      - name: Run 30-day rank-1 strategy research
         env:
           SPREAD_BPS: ${{ vars.SPREAD_BPS }}
           COMMISSION_PER_TRADE: ${{ vars.COMMISSION_PER_TRADE }}
@@ -74,15 +50,15 @@ jobs:
       - name: Verify research output
         run: |
           test -s docs/backtest-research.html
-          grep -q "£30 rank-1 opposite-direction strategy" docs/backtest-research.html
-          grep -q "opposite-direction historical replay" docs/backtest-research.html
+          grep -q "£30 rank-1 strategy" docs/backtest-research.html
+          grep -q "15-minute opening-range" docs/backtest-research.html
           grep -q "Daily replay" docs/backtest-research.html
-          echo "Opposite-direction 30-day research report verified"
+          echo "30-day research report verified"
 
       - name: Publish research page
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/backtest-research.html
-          git commit -m "Update opposite-direction 30-day research" || echo "No research report changes"
-          git push origin HEAD:main
+          git commit -m "Update 30-day rank-1 strategy research" || echo "No research report changes"
+          git push
