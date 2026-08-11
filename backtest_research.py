@@ -1,25 +1,52 @@
+# FILE_VERSION: FTSE350_ORB_RANK1_30DAY_RESEARCH_2026_08_11
 """
-Research backtest for the FTSE 250 screener.
+Historical research page for the live FTSE 350 day-trading strategy.
 
-Purpose
--------
-Compare the current live score with fixed alternative weightings for the factors
-already measured by screener.py: candlestick pattern, RSI, SMA20 trend alignment
-and volume ratio. The script uses the first 70% of dates as the research period
-and reports performance separately on the final 30% holdout period.
+What it tests
+-------------
+For each of the last 30 completed London trading sessions:
 
-It writes docs/backtest-research.html. It does not modify screener.py or the live scoring.
+1. Use ONLY daily data available at the PRIOR close.
+2. Rebuild the same liquid long/short watchlist used by screener.py via
+   build_intraday_candidate().
+3. Select rank 1 only.
+4. On the next session, establish the 08:00-08:15 opening range.
+5. From 08:15 to 09:30, replay the current technical decision rules:
+      - correct side of previous close
+      - correct side of VWAP
+      - opening turnover >= live threshold
+      - controlled gap
+      - not excessively stretched from VWAP
+      - relative opening volume >= live ready threshold
+      - post-opening-range higher-low/lower-high structure
+      - break of the 15-minute opening range
+      - no entry beyond MAX_CHASE_R
+6. If a trade confirms, invest exactly £30 notional (fractional shares allowed).
+7. Exit the full position at the displayed 2R target or stop. If neither is hit,
+   exit at the final completed bar before 09:30.
+8. If both stop and target are touched in the same five-minute candle, assume
+   the stop was hit first (conservative).
+
+Historical news caveat
+----------------------
+The live page can show current Yahoo headlines. Yahoo's search feed is not a
+reliable point-in-time archive for every historical session, so this research
+does NOT award or penalise a historical news catalyst. All historical entries
+are therefore technical B-grade equivalents. This avoids look-ahead bias.
+
+Output: docs/backtest-research.html
 """
 
-# FILE_VERSION: BACKTEST_RESEARCH_LONG_ONLY_RANK1_OUTPUT_FIX_2026_08_02
+from __future__ import annotations
 
-import argparse
 import datetime as dt
 import html as html_lib
 import math
 import os
 import sys
-from collections import defaultdict
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -27,491 +54,627 @@ import yfinance as yf
 
 import screener as scr
 
+LONDON = ZoneInfo("Europe/London")
+UTC = dt.timezone.utc
 
-def env_float(name, default):
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return float(default)
-    return float(raw.strip())
+OUTPUT_PATH = Path(__file__).resolve().parent / "docs" / "backtest-research.html"
 
+DAYS = 30
+NOTIONAL_GBP = 30.0
 
-def env_int(name, default):
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return int(default)
-    return int(raw.strip())
+# Keep these defaults aligned with intraday_daytrader.py.
+MAX_GAP_PCT = 3.0
+MIN_OPENING_TURNOVER_GBP = 75_000.0
+MAX_VWAP_DISTANCE_PCT = 1.50
+ENTRY_BUFFER_PCT = 0.04
+ATR_STOP_MULTIPLIER = 0.50
+MIN_STOP_PCT = 0.75
+MIN_READY_VOLUME_RATIO = 0.75
+MAX_CHASE_R = 0.30
+TARGET_R = 2.0
 
+# Research-only execution cost assumption. 20 bps = 0.20% of £30 = 6p per trade.
+SPREAD_BPS = float(os.environ.get("SPREAD_BPS") or 20.0)
+COMMISSION_PER_TRADE = float(os.environ.get("COMMISSION_PER_TRADE") or 0.0)
 
-CAPITAL = env_float("CAPITAL", 5000)
-RISK_PCT = env_float("RISK_PCT", 1)
-SPREAD_BPS = env_float("SPREAD_BPS", 20)
-COMMISSION_PER_TRADE = env_float("COMMISSION_PER_TRADE", 0)
-BACKTEST_DAYS = env_int("BACKTEST_DAYS", 75)
-OUTPUT_PATH = os.path.abspath(os.path.join(os.getcwd(), "docs", "backtest-research.html"))
-
-PATTERN_BASE = {
-    "Morning star": 9.0,
-    "Evening star": 9.0,
-    "Bullish engulfing": 8.0,
-    "Bearish engulfing": 8.0,
-    "Hammer": 6.5,
-    "Hanging man": 6.5,
-    "Shooting star": 6.0,
-    "Inverted hammer": 6.0,
-    "Bullish marubozu": 7.0,
-    "Bearish marubozu": 7.0,
-    "Doji": 3.0,
-}
+INK = "#12161F"
+PANEL = "#1B2129"
+HAIRLINE = "#2C333D"
+BRASS = "#C9A24B"
+SALMON = "#E8A493"
+BULL = "#4FAE73"
+BEAR = "#D1594B"
+PAPER = "#ECE7DA"
+MUTED = "#8B92A0"
 
 
-def get_trading_days(index, start=None, end=None, last_n=None):
-    days = list(index)
-    if start:
-        days = [d for d in days if d.date() >= start]
-    if end:
-        days = [d for d in days if d.date() <= end]
-    if last_n:
-        days = days[-(last_n + 1):-1] if len(days) > last_n else days[:-1]
-    return days
+def gbx_to_gbp(value: float) -> float:
+    return float(value) / 100.0
 
 
-def analyze_as_of(epic, name, df_full, as_of_idx):
-    window = df_full.iloc[max(0, as_of_idx - 40): as_of_idx + 1]
-    return scr.analyze(epic, name, window)
+def normalise(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    frame = frame.copy()
+    if isinstance(frame.columns, pd.MultiIndex):
+        frame.columns = frame.columns.get_level_values(0)
+    required = ["Open", "High", "Low", "Close", "Volume"]
+    if any(c not in frame.columns for c in required):
+        return pd.DataFrame()
+    frame = frame.dropna(subset=["Open", "High", "Low", "Close"])
+    return frame.sort_index()
 
 
-def factor_values(r):
-    bull = r["direction"] == "Long"
-    entry = float(r["entry"])
-    sma20 = float(r["sma20"]) if r.get("sma20") is not None else None
-    rsi = float(r["rsi"]) if r.get("rsi") is not None else None
-    vol = float(r.get("vol_ratio") or 1.0)
-
-    trend_aligned = bool(sma20 is not None and ((bull and entry > sma20) or ((not bull) and entry < sma20)))
-    sma_distance_pct = ((entry / sma20) - 1.0) * 100.0 if sma20 and sma20 > 0 else 0.0
-    directional_sma_distance = sma_distance_pct if bull else -sma_distance_pct
-
-    rsi_supportive = False
-    rsi_extreme = False
-    if rsi is not None:
-        rsi_supportive = (bull and rsi < 55) or ((not bull) and rsi > 45)
-        rsi_extreme = (bull and rsi < 35) or ((not bull) and rsi > 65)
-
-    return {
-        "pattern_base": PATTERN_BASE.get(r["pattern"], 0.0),
-        "rsi_supportive": rsi_supportive,
-        "rsi_extreme": rsi_extreme,
-        "trend_aligned": trend_aligned,
-        "directional_sma_distance": directional_sma_distance,
-        "high_volume": vol >= 1.5,
-        "very_high_volume": vol >= 2.0,
-        "vol_ratio": vol,
-    }
+def london_intraday(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = normalise(frame)
+    if frame.empty:
+        return frame
+    idx = pd.DatetimeIndex(frame.index)
+    if idx.tz is None:
+        idx = idx.tz_localize(UTC)
+    frame.index = idx.tz_convert(LONDON)
+    return frame.sort_index()
 
 
-def model_scores(r):
-    f = factor_values(r)
-    baseline = float(r["score"])
-
-    # Fixed alternatives. They deliberately alter only ranking, not trade exits.
-    return {
-        "Current score": baseline,
-        "Pattern weighted": baseline + 0.45 * f["pattern_base"],
-        "RSI weighted": baseline + (2.2 if f["rsi_extreme"] else 1.0 if f["rsi_supportive"] else -0.8),
-        "Trend weighted": baseline + (2.5 if f["trend_aligned"] else -1.5),
-        "Volume weighted": baseline + (3.0 if f["very_high_volume"] else 2.0 if f["high_volume"] else -0.5),
-        "Trend + volume": baseline + (1.8 if f["trend_aligned"] else -1.0) + (2.2 if f["very_high_volume"] else 1.4 if f["high_volume"] else -0.4),
-    }
-
-
-def evaluate_candidate(r, next_row, next_date, capital, risk_pct):
-    bull = r["direction"] == "Long"
-    signal_close = float(r["entry"])
-    entry = float(next_row.Open)
-    stop = float(r["stop"])
-    next_high = float(next_row.High)
-    next_low = float(next_row.Low)
-    next_close = float(next_row.Close)
-
-    values = (signal_close, entry, stop, next_high, next_low, next_close)
-    if not all(np.isfinite(v) and v > 0 for v in values):
-        return None
-
-    gap_pct = ((entry / signal_close) - 1.0) * 100.0
-    invalid_open = (bull and entry <= stop) or ((not bull) and entry >= stop)
-
-    base = {
-        "exit_date": next_date.date().isoformat(),
-        "epic": r["epic"],
-        "name": r["name"],
-        "pattern": r["pattern"],
-        "direction": r["direction"],
-        "baseline_score": float(r["score"]),
-        "rsi": float(r["rsi"]) if r.get("rsi") is not None else None,
-        "sma20": float(r["sma20"]) if r.get("sma20") is not None else None,
-        "vol_ratio": float(r.get("vol_ratio") or 1.0),
-        "signal_close": signal_close,
-        "entry": entry,
-        "stop": stop,
-        "gap_pct": gap_pct,
-        **factor_values(r),
-        "model_scores": model_scores(r),
-    }
-
-    if invalid_open:
-        return {**base, "skipped": True, "outcome": "opened beyond stop", "target": None,
-                "exit_price": None, "shares": 0, "gross_pnl": 0.0, "costs": 0.0,
-                "pnl": 0.0, "r_multiple": 0.0, "ambiguous": False}
-
-    risk_per_share = abs(entry - stop)
-    if risk_per_share <= 0 or not np.isfinite(risk_per_share):
-        return None
-    target = entry + 2 * risk_per_share if bull else entry - 2 * risk_per_share
-
-    hit_stop = next_low <= stop if bull else next_high >= stop
-    hit_target = next_high >= target if bull else next_low <= target
-    ambiguous = hit_stop and hit_target
-
-    if ambiguous or hit_stop:
-        exit_price = stop
-        outcome = "stop" if not ambiguous else "stop (both touched)"
-    elif hit_target:
-        exit_price = target
-        outcome = "target"
-    else:
-        exit_price = next_close
-        outcome = "session close"
-
-    risk_amount = capital * risk_pct / 100.0
-    entry_gbp = entry / 100.0
-    risk_per_share_gbp = risk_per_share / 100.0
-    risk_sized = int(risk_amount / risk_per_share_gbp) if risk_per_share_gbp > 0 else 0
-    affordable = int(capital / entry_gbp) if entry_gbp > 0 else 0
-    shares = max(0, min(risk_sized, affordable))
-
-    pnl_per_share = (exit_price - entry) if bull else (entry - exit_price)
-    gross_pnl = pnl_per_share / 100.0 * shares
-    spread_cost = ((entry_gbp + exit_price / 100.0) * shares) * (SPREAD_BPS / 20000.0)
-    costs = spread_cost + (COMMISSION_PER_TRADE if shares > 0 else 0.0)
-    pnl = gross_pnl - costs
-    r_multiple = pnl_per_share / risk_per_share
-
-    if not all(np.isfinite(v) for v in (gross_pnl, costs, pnl, r_multiple)):
-        return None
-
-    return {**base, "skipped": False, "outcome": outcome, "target": target,
-            "exit_price": exit_price, "shares": shares, "gross_pnl": gross_pnl,
-            "costs": costs, "pnl": pnl, "r_multiple": r_multiple,
-            "ambiguous": ambiguous}
-
-
-def build_candidate_history(start=None, end=None, last_n=None):
-    print("Fetching FTSE 250 constituent list...")
-    constituents = scr.fetch_ftse250_constituents()
-    epics = list(constituents.keys())
-    yahoo_tickers = [scr.epic_to_yahoo(e) for e in epics]
-    ticker_to_epic = dict(zip(yahoo_tickers, epics))
-
-    print(f"Downloading daily history for {len(yahoo_tickers)} tickers...")
-    data = yf.download(
-        yahoo_tickers, period="6mo", interval="1d", group_by="ticker",
-        threads=True, progress=False, auto_adjust=False,
-    )
-
-    cleaned = {}
-    for yt in yahoo_tickers:
+def ticker_frame(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    if data is None or data.empty:
+        return pd.DataFrame()
+    if isinstance(data.columns, pd.MultiIndex):
         try:
-            df = data[yt] if isinstance(data.columns, pd.MultiIndex) else data
+            frame = data[ticker].copy()
+        except Exception:
+            try:
+                frame = data.xs(ticker, axis=1, level=1).copy()
+            except Exception:
+                return pd.DataFrame()
+    else:
+        frame = data.copy()
+    return normalise(frame)
+
+
+def atr_as_of(frame: pd.DataFrame, signal_date: dt.date, period: int = 14) -> float | None:
+    hist = frame[pd.DatetimeIndex(frame.index).date <= signal_date].copy()
+    if len(hist) < period + 1:
+        return None
+    prev_close = hist["Close"].shift(1)
+    tr = pd.concat(
+        [
+            hist["High"] - hist["Low"],
+            (hist["High"] - prev_close).abs(),
+            (hist["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.tail(period).mean()
+    return float(atr) if math.isfinite(float(atr)) and float(atr) > 0 else None
+
+
+def previous_close(frame: pd.DataFrame, signal_date: dt.date) -> float | None:
+    hist = frame[pd.DatetimeIndex(frame.index).date <= signal_date]
+    if hist.empty:
+        return None
+    return float(hist.iloc[-1]["Close"])
+
+
+def select_rank1(
+    constituents: dict[str, str],
+    daily_data: pd.DataFrame,
+    signal_date: dt.date,
+) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+
+    for epic, name in constituents.items():
+        ticker = scr.epic_to_yahoo(epic)
+        frame = ticker_frame(daily_data, ticker)
+        if frame.empty:
+            continue
+
+        dates = pd.DatetimeIndex(frame.index).date
+        hist = frame[dates <= signal_date]
+        if len(hist) < 25:
+            continue
+
+        # Restrict to information known at the prior close.
+        hist = hist.tail(70)
+        try:
+            candidate = scr.build_intraday_candidate(epic, name, hist)
         except Exception:
             continue
-        if df is None or df.empty:
-            continue
-        df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
-        if not df.empty:
-            cleaned[yt] = df
+        if candidate:
+            candidate = dict(candidate)
+            candidate["yahoo_ticker"] = ticker
+            candidates.append(candidate)
 
-    if not cleaned:
-        raise RuntimeError("No usable price history was returned.")
-
-    sample_df = next(iter(cleaned.values()))
-    signal_days = get_trading_days(sample_df.index, start=start, end=end, last_n=last_n)
-    if not signal_days:
-        raise RuntimeError("No signal days selected.")
-
-    history = defaultdict(list)
-    for signal_day in signal_days:
-        print(f"Analysing {signal_day.date().isoformat()}...")
-        for yt, df in cleaned.items():
-            if signal_day not in df.index:
-                continue
-            loc = df.index.get_loc(signal_day)
-            if not isinstance(loc, (int, np.integer)) or int(loc) + 1 >= len(df):
-                continue
-            try:
-                r = analyze_as_of(ticker_to_epic[yt], constituents[ticker_to_epic[yt]], df, int(loc))
-            except Exception:
-                continue
-            if not r:
-                continue
-            result = evaluate_candidate(r, df.iloc[int(loc) + 1], df.index[int(loc) + 1], CAPITAL, RISK_PCT)
-            if result is not None:
-                result["signal_date"] = signal_day.date().isoformat()
-                history[result["signal_date"]].append(result)
-
-    return dict(history)
-
-
-def selected_trades(history, model_name, dates, direction=None, limit=5, skip_first=0):
-    """Return ranked trades for each day.
-
-    When direction is supplied, ranking is performed inside that direction. Therefore
-    direction="Long", limit=1 means the highest-ranked long candidate of each day,
-    regardless of whether a short candidate scored more highly overall.
-    """
-    trades = []
-    for date in dates:
-        candidates = history.get(date, [])
-        if direction:
-            candidates = [t for t in candidates if t["direction"] == direction]
-        ranked = sorted(candidates, key=lambda x: x["model_scores"][model_name], reverse=True)
-        trades.extend(ranked[skip_first: skip_first + limit])
-    return trades
-
-
-def summary(trades):
-    executed = [t for t in trades if not t["skipped"] and t["shares"] > 0]
-    pnls = [t["pnl"] for t in executed]
-    wins = [p for p in pnls if p > 0]
-    losses = [p for p in pnls if p < 0]
-    gross_profit = sum(wins)
-    gross_loss = abs(sum(losses))
-    profit_factor = gross_profit / gross_loss if gross_loss else (math.inf if gross_profit else 0.0)
-    equity = CAPITAL
-    peak = CAPITAL
-    max_dd = 0.0
-    for p in pnls:
-        equity += p
-        peak = max(peak, equity)
-        max_dd = max(max_dd, peak - equity)
-    return {
-        "signals": len(trades),
-        "executed": len(executed),
-        "wins": len(wins),
-        "win_rate": len(wins) / len(executed) * 100 if executed else 0.0,
-        "net_pnl": sum(pnls),
-        "avg_r": float(np.mean([t["r_multiple"] for t in executed])) if executed else 0.0,
-        "profit_factor": profit_factor,
-        "max_drawdown": max_dd,
-    }
-
-
-def bootstrap_difference(on_values, off_values, iterations=2000, seed=20260802):
-    if len(on_values) < 5 or len(off_values) < 5:
+    if not candidates:
         return None
-    rng = np.random.default_rng(seed)
-    diffs = np.empty(iterations)
-    a = np.asarray(on_values, dtype=float)
-    b = np.asarray(off_values, dtype=float)
-    for i in range(iterations):
-        diffs[i] = rng.choice(a, size=len(a), replace=True).mean() - rng.choice(b, size=len(b), replace=True).mean()
-    return float(np.percentile(diffs, 2.5)), float(np.percentile(diffs, 97.5))
+
+    candidates.sort(key=lambda r: float(r.get("score", 0) or 0), reverse=True)
+    return candidates[0]
 
 
-def factor_analysis(history, dates):
-    candidates = [
-        t for d in dates for t in history.get(d, [])
-        if t["direction"] == "Long" and not t["skipped"] and t["shares"] > 0
-    ]
-    definitions = {
-        "Strong pattern (base ≥ 7)": lambda t: t["pattern_base"] >= 7,
-        "Supportive RSI": lambda t: t["rsi_supportive"],
-        "Extreme RSI": lambda t: t["rsi_extreme"],
-        "SMA20 trend alignment": lambda t: t["trend_aligned"],
-        "Volume ≥ 1.5× average": lambda t: t["high_volume"],
-        "Volume ≥ 2.0× average": lambda t: t["very_high_volume"],
-    }
-    rows = []
-    for name, predicate in definitions.items():
-        on = [t["r_multiple"] for t in candidates if predicate(t)]
-        off = [t["r_multiple"] for t in candidates if not predicate(t)]
-        if not on or not off:
+def prior_comparable_volume(
+    intraday: pd.DataFrame,
+    trade_date: dt.date,
+    end_time: dt.time,
+) -> float | None:
+    totals: list[float] = []
+    for day in sorted(set(intraday.index.date)):
+        if day >= trade_date:
             continue
-        effect = float(np.mean(on) - np.mean(off))
-        ci = bootstrap_difference(on, off)
-        if ci and ci[0] > 0 and len(on) >= 100:
-            confidence = "High"
-        elif ci and ci[0] > 0 and len(on) >= 40:
-            confidence = "Moderate"
-        elif effect > 0:
-            confidence = "Low"
-        else:
-            confidence = "No positive evidence"
-        rows.append({
-            "factor": name,
-            "n_on": len(on),
-            "n_off": len(off),
-            "avg_r_on": float(np.mean(on)),
-            "avg_r_off": float(np.mean(off)),
-            "effect": effect,
-            "ci": ci,
-            "confidence": confidence,
-        })
-    rows.sort(key=lambda x: x["effect"], reverse=True)
-    return rows
+        part = intraday[
+            (intraday.index.date == day)
+            & (intraday.index.time >= dt.time(8, 0))
+            & (intraday.index.time < end_time)
+        ]
+        total = float(part["Volume"].fillna(0).sum())
+        if total > 0:
+            totals.append(total)
+    # Use up to the most recent five comparable sessions, matching the limited
+    # 5-minute history available from Yahoo without using future information.
+    return float(np.mean(totals[-5:])) if totals else None
 
 
-def fmt_pf(value):
-    return "∞" if math.isinf(value) else f"{value:.2f}"
+def structure_ok(opening: pd.DataFrame, direction: str) -> bool:
+    if len(opening) < 5:
+        return False
+    post = opening.iloc[3:]
+    if direction == "Long":
+        lows = post["Low"].astype(float)
+        return len(lows) >= 2 and lows.iloc[-1] >= lows.iloc[0]
+    highs = post["High"].astype(float)
+    return len(highs) >= 2 and highs.iloc[-1] <= highs.iloc[0]
 
 
-def render_html(history, dates, train_dates, test_dates, model_results, ranking_results, factors):
-    baseline_test = model_results["Current score"]["test"]
-    best_name = max(model_results, key=lambda n: model_results[n]["test"]["net_pnl"])
-    best_test = model_results[best_name]["test"]
-    primary = factors[0] if factors else None
+def simulate_day(
+    candidate: dict[str, Any],
+    trade_date: dt.date,
+    signal_date: dt.date,
+    daily_frame: pd.DataFrame,
+    intraday: pd.DataFrame,
+) -> dict[str, Any]:
+    epic = str(candidate["epic"])
+    name = str(candidate["name"])
+    direction = str(candidate["direction"]).title()
 
-    model_rows = []
-    for name, result in model_results.items():
-        full, train, test = result["full"], result["train"], result["test"]
-        change = test["net_pnl"] - baseline_test["net_pnl"]
-        cls = "positive" if change > 0 else "negative" if change < 0 else "neutral"
-        model_rows.append(f"""
-        <tr>
-          <td><strong>{html_lib.escape(name)}</strong></td>
-          <td>£{full['net_pnl']:+,.2f}</td><td>{full['win_rate']:.1f}%</td><td>{fmt_pf(full['profit_factor'])}</td><td>£{full['max_drawdown']:,.2f}</td>
-          <td>£{train['net_pnl']:+,.2f}</td>
-          <td>£{test['net_pnl']:+,.2f}</td><td>{test['win_rate']:.1f}%</td><td>{fmt_pf(test['profit_factor'])}</td>
-          <td class="{cls}">£{change:+,.2f}</td>
-        </tr>""")
+    result: dict[str, Any] = {
+        "date": trade_date,
+        "signal_date": signal_date,
+        "epic": epic,
+        "name": name,
+        "direction": direction,
+        "watch_score": float(candidate.get("score", 0) or 0),
+        "status": "NO TRADE",
+        "reason": "",
+        "entry": None,
+        "stop": None,
+        "target": None,
+        "exit": None,
+        "gross_pnl": 0.0,
+        "cost": 0.0,
+        "net_pnl": 0.0,
+        "return_pct": 0.0,
+        "equity": None,
+    }
 
+    day = intraday[
+        (intraday.index.date == trade_date)
+        & (intraday.index.time >= dt.time(8, 0))
+        & (intraday.index.time < dt.time(9, 30))
+    ].copy()
 
-    ranking_rows = []
-    for name, groups in ranking_results.items():
-        for label, stats in groups.items():
-            row_class = "neutral" if "Short" in label else ""
-            ranking_rows.append(f"""
-            <tr class="{row_class}">
-              <td><strong>{html_lib.escape(name)}</strong></td>
-              <td>{html_lib.escape(label)}</td>
-              <td>{stats['signals']}</td><td>{stats['executed']}</td><td>{stats['wins']}</td>
-              <td>{stats['win_rate']:.1f}%</td><td>£{stats['net_pnl']:+,.2f}</td>
-              <td>{stats['avg_r']:+.2f}R</td><td>{fmt_pf(stats['profit_factor'])}</td>
-              <td>£{stats['max_drawdown']:,.2f}</td>
-            </tr>""")
+    if len(day) < 5:
+        result["status"] = "NO DATA"
+        result["reason"] = "Fewer than five completed 5-minute bars."
+        return result
 
-    factor_rows = []
-    for f in factors:
-        ci_text = "n/a" if not f["ci"] else f"{f['ci'][0]:+.2f}R to {f['ci'][1]:+.2f}R"
-        factor_rows.append(f"""
-        <tr><td>{html_lib.escape(f['factor'])}</td><td>{f['n_on']}</td>
-        <td>{f['avg_r_on']:+.2f}R</td><td>{f['avg_r_off']:+.2f}R</td>
-        <td>{f['effect']:+.2f}R</td><td>{ci_text}</td><td>{f['confidence']}</td></tr>""")
+    opening_range = day[
+        (day.index.time >= dt.time(8, 0))
+        & (day.index.time < dt.time(8, 15))
+    ]
+    if len(opening_range) < 3:
+        result["status"] = "NO DATA"
+        result["reason"] = "Incomplete 08:00-08:15 opening range."
+        return result
 
-    if primary:
-        primary_html = f"""
-        <section class="callout">
-          <div class="eyebrow">Strongest measured factor for long candidates in the holdout period</div>
-          <h2>{html_lib.escape(primary['factor'])}</h2>
-          <p>Average improvement: <strong>{primary['effect']:+.2f}R per candidate</strong>. Confidence: <strong>{primary['confidence']}</strong>.</p>
-          <p class="muted">Factor present: {primary['n_on']} candidates at {primary['avg_r_on']:+.2f}R average; absent: {primary['n_off']} candidates at {primary['avg_r_off']:+.2f}R average.</p>
-        </section>"""
+    pc = previous_close(daily_frame, signal_date)
+    atr = atr_as_of(daily_frame, signal_date)
+    if pc is None or pc <= 0:
+        result["status"] = "NO DATA"
+        result["reason"] = "Previous close unavailable."
+        return result
+
+    first_open = float(day.iloc[0]["Open"])
+    gap_pct = ((first_open - pc) / pc) * 100
+    or_high = float(opening_range["High"].max())
+    or_low = float(opening_range["Low"].min())
+
+    if abs(gap_pct) > MAX_GAP_PCT:
+        result["status"] = "NO TRADE"
+        result["reason"] = f"Opening gap {gap_pct:+.2f}% exceeded limit."
+        return result
+
+    trigger = (
+        or_high * (1 + ENTRY_BUFFER_PCT / 100)
+        if direction == "Long"
+        else or_low * (1 - ENTRY_BUFFER_PCT / 100)
+    )
+
+    structure_stop = or_low if direction == "Long" else or_high
+    atr_distance = (atr or 0.0) * ATR_STOP_MULTIPLIER
+    minimum_distance = trigger * MIN_STOP_PCT / 100
+
+    if direction == "Long":
+        stop_distance = max(trigger - structure_stop, atr_distance, minimum_distance)
+        stop = trigger - stop_distance
+        target = trigger + TARGET_R * stop_distance
+        max_entry = trigger + MAX_CHASE_R * stop_distance
     else:
-        primary_html = '<section class="callout"><h2>No factor conclusion</h2></section>'
+        stop_distance = max(structure_stop - trigger, atr_distance, minimum_distance)
+        stop = trigger + stop_distance
+        target = trigger - TARGET_R * stop_distance
+        max_entry = trigger - MAX_CHASE_R * stop_distance
 
-    generated = dt.datetime.now(dt.timezone.utc).strftime("%a %d %b %Y, %H:%M UTC")
-    return f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FTSE 250 scoring research</title>
+    result["stop"] = stop
+    result["target"] = target
+
+    entry_idx = None
+    entry_price = None
+
+    # Replay the live assessment at each completed five-minute bar.
+    for i in range(4, len(day)):
+        opening = day.iloc[: i + 1]
+        current = float(opening.iloc[-1]["Close"])
+        end_time = (opening.index[-1] + pd.Timedelta(minutes=5)).time()
+
+        typical = (opening["High"] + opening["Low"] + opening["Close"]) / 3
+        vols = opening["Volume"].fillna(0)
+        vwap = float((typical * vols).sum() / vols.sum()) if vols.sum() > 0 else current
+
+        volume = float(vols.sum())
+        avg_volume = prior_comparable_volume(intraday, trade_date, end_time)
+        volume_ratio = volume / avg_volume if avg_volume and avg_volume > 0 else None
+        turnover_gbp = volume * gbx_to_gbp(current)
+        vwap_distance_pct = abs((current - vwap) / vwap) * 100 if vwap else 0.0
+
+        if direction == "Long":
+            side_prev = current > pc
+            side_vwap = current > vwap
+            broken = current >= trigger
+            beyond = current > max_entry
+        else:
+            side_prev = current < pc
+            side_vwap = current < vwap
+            broken = current <= trigger
+            beyond = current < max_entry
+
+        hard_fail = (
+            not side_prev
+            or not side_vwap
+            or turnover_gbp < MIN_OPENING_TURNOVER_GBP
+            or vwap_distance_pct > MAX_VWAP_DISTANCE_PCT
+        )
+        ready = (
+            not hard_fail
+            and volume_ratio is not None
+            and volume_ratio >= MIN_READY_VOLUME_RATIO
+            and structure_ok(opening, direction)
+        )
+
+        if beyond:
+            result["status"] = "MISSED"
+            result["reason"] = "Breakout moved beyond the permitted chase zone."
+            return result
+
+        if broken and ready:
+            entry_idx = i
+            # Live user would enter after the confirming completed candle, so
+            # use that candle's close rather than assuming a fill at the trigger.
+            entry_price = current
+            break
+
+    if entry_idx is None or entry_price is None:
+        result["status"] = "NO TRADE"
+        result["reason"] = "No confirmed opening-range breakout before 09:30."
+        return result
+
+    result["entry"] = entry_price
+
+    # Evaluate subsequent 5-minute candles. Entry confirmation occurs on the
+    # close of entry_idx, so start outcome testing on the NEXT candle.
+    exit_price = float(day.iloc[-1]["Close"])
+    outcome = "TIME EXIT"
+
+    for j in range(entry_idx + 1, len(day)):
+        bar = day.iloc[j]
+        bar_high = float(bar["High"])
+        bar_low = float(bar["Low"])
+
+        if direction == "Long":
+            stop_hit = bar_low <= stop
+            target_hit = bar_high >= target
+        else:
+            stop_hit = bar_high >= stop
+            target_hit = bar_low <= target
+
+        if stop_hit and target_hit:
+            exit_price = stop
+            outcome = "STOP (same-bar conservative)"
+            break
+        if stop_hit:
+            exit_price = stop
+            outcome = "STOP"
+            break
+        if target_hit:
+            exit_price = target
+            outcome = "2R TARGET"
+            break
+
+    shares = NOTIONAL_GBP / gbx_to_gbp(entry_price)
+    if direction == "Long":
+        gross = shares * (gbx_to_gbp(exit_price) - gbx_to_gbp(entry_price))
+    else:
+        gross = shares * (gbx_to_gbp(entry_price) - gbx_to_gbp(exit_price))
+
+    spread_cost = NOTIONAL_GBP * (SPREAD_BPS / 10_000.0)
+    cost = spread_cost + COMMISSION_PER_TRADE
+    net = gross - cost
+
+    result.update(
+        {
+            "status": outcome,
+            "reason": "Trade confirmed under the current technical strategy.",
+            "exit": exit_price,
+            "gross_pnl": gross,
+            "cost": cost,
+            "net_pnl": net,
+            "return_pct": (net / NOTIONAL_GBP) * 100,
+        }
+    )
+    return result
+
+
+def max_drawdown(values: list[float]) -> float:
+    peak = values[0] if values else 0.0
+    worst = 0.0
+    for value in values:
+        peak = max(peak, value)
+        worst = min(worst, value - peak)
+    return worst
+
+
+def render(results: list[dict[str, Any]], generated: str) -> str:
+    traded = [r for r in results if r["entry"] is not None]
+    wins = [r for r in traded if r["net_pnl"] > 0]
+    losses = [r for r in traded if r["net_pnl"] < 0]
+    no_trades = [r for r in results if r["entry"] is None]
+
+    total_net = sum(r["net_pnl"] for r in results)
+    cumulative = 0.0
+    curve = [0.0]
+    for r in results:
+        cumulative += r["net_pnl"]
+        r["equity"] = cumulative
+        curve.append(cumulative)
+
+    win_rate = (len(wins) / len(traded) * 100) if traded else 0.0
+    gross_profit = sum(r["net_pnl"] for r in wins)
+    gross_loss = abs(sum(r["net_pnl"] for r in losses))
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else (float("inf") if gross_profit > 0 else 0.0)
+    dd = max_drawdown(curve)
+
+    rows = []
+    for r in reversed(results):
+        pnl_class = "positive" if r["net_pnl"] > 0 else ("negative" if r["net_pnl"] < 0 else "neutral")
+        rows.append(
+            "<tr>"
+            f"<td>{r['date'].strftime('%d %b %Y')}</td>"
+            f"<td><strong>{html_lib.escape(r['epic'])}</strong><br><span class='muted'>{html_lib.escape(r['name'])}</span></td>"
+            f"<td>{html_lib.escape(r['direction'])}</td>"
+            f"<td>{html_lib.escape(r['status'])}</td>"
+            f"<td>{'£'+format(gbx_to_gbp(r['entry']), '.2f') if r['entry'] is not None else '—'}</td>"
+            f"<td>{'£'+format(gbx_to_gbp(r['stop']), '.2f') if r['stop'] is not None else '—'}</td>"
+            f"<td>{'£'+format(gbx_to_gbp(r['target']), '.2f') if r['target'] is not None else '—'}</td>"
+            f"<td>{'£'+format(gbx_to_gbp(r['exit']), '.2f') if r['exit'] is not None else '—'}</td>"
+            f"<td class='{pnl_class}'>{r['net_pnl']:+.2f}</td>"
+            f"<td class='{pnl_class}'>{r['return_pct']:+.2f}%</td>"
+            f"<td>{r['equity']:+.2f}</td>"
+            "</tr>"
+        )
+
+    pf_text = "∞" if math.isinf(profit_factor) else f"{profit_factor:.2f}"
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FTSE 350 · 30-day rank-1 strategy research</title>
 <style>
-:root{{--ink:#12161f;--panel:#1b2129;--line:#303843;--paper:#ece7da;--muted:#9aa1ac;--gold:#c9a24b;--green:#5eb77c;--red:#dc6a5d}}
-*{{box-sizing:border-box}} body{{margin:0;background:var(--ink);color:var(--paper);font-family:Arial,sans-serif}} .wrap{{max-width:1120px;margin:auto;padding:22px 14px 50px}}
-nav{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}} nav a{{color:var(--paper);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:13px}} nav a.active{{color:var(--gold);border-color:var(--gold)}}
-h1{{margin:4px 0}} .muted,.sub{{color:var(--muted)}} .sub{{margin-bottom:18px;font-size:13px}} .callout{{border:1px solid var(--gold);background:var(--panel);padding:16px;border-radius:10px;margin:18px 0}} .callout h2{{margin:5px 0 8px}} .eyebrow{{color:var(--gold);font-size:11px;text-transform:uppercase;letter-spacing:.08em}}
-.grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0}} .stat{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}} .label{{color:var(--muted);font-size:11px;text-transform:uppercase}} .value{{font-size:19px;margin-top:5px}}
-.table-wrap{{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin:12px 0 22px}} table{{width:100%;border-collapse:collapse;min-width:900px;background:var(--panel)}} th,td{{padding:10px;border-bottom:1px solid var(--line);font-size:13px;text-align:right;white-space:nowrap}} th:first-child,td:first-child{{text-align:left}} th{{color:var(--muted);font-size:11px;text-transform:uppercase}} .positive{{color:var(--green)}} .negative{{color:var(--red)}} .neutral{{color:var(--muted)}} .note{{font-size:12px;line-height:1.5;color:var(--muted)}}
-@media(max-width:650px){{.grid{{grid-template-columns:repeat(2,minmax(0,1fr))}} h1{{font-size:24px}}}}
-</style></head><body><main class="wrap">
-<nav><a href="index.html">Daily screener</a><a href="backtest.html">Backtest</a><a class="active" href="backtest-research.html">Research</a><a href="intraday.html">Intraday</a></nav>
-<h1>Scoring-model research backtest</h1><div class="sub">Generated {generated} · {dates[0]} to {dates[-1]} · first 70% research / final 30% holdout</div>
+:root{{--ink:{INK};--panel:{PANEL};--line:{HAIRLINE};--brass:{BRASS};--salmon:{SALMON};--green:{BULL};--red:{BEAR};--paper:{PAPER};--muted:{MUTED}}}
+*{{box-sizing:border-box}} body{{margin:0;background:var(--ink);color:var(--paper);font-family:Arial,sans-serif}}
+.wrap{{max-width:1120px;margin:auto;padding:28px 18px 60px}}
+nav{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}} nav a{{color:var(--paper);text-decoration:none;border:1px solid var(--line);padding:8px 12px;border-radius:999px;font-size:13px}} nav a.active{{color:var(--brass);border-color:var(--brass)}}
+h1{{font-size:28px;margin:5px 0}} h2{{font-size:18px;margin-top:26px}} .sub,.note,.muted{{color:var(--muted)}} .sub{{font-size:12px;line-height:1.55}}
+.strategy{{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px;margin:18px 0;line-height:1.6;font-size:13px}} .strategy strong{{color:var(--brass)}}
+.grid{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:16px 0}}
+.stat{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}}
+.label{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}} .value{{font-size:20px;margin-top:5px}}
+.table-wrap{{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin-top:14px}}
+table{{width:100%;border-collapse:collapse;min-width:1000px;background:var(--panel)}} th,td{{padding:9px 10px;border-bottom:1px solid var(--line);font-size:12px;text-align:right;white-space:nowrap}} th{{color:var(--muted);font-size:10px;text-transform:uppercase}} th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2),th:nth-child(4),td:nth-child(4){{text-align:left}}
+.positive{{color:var(--green)}} .negative{{color:var(--red)}} .neutral{{color:var(--muted)}}
+@media(max-width:800px){{.grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+</style>
+</head>
+<body><main class="wrap">
+<nav><a href="index.html">Pre-market</a><a href="intraday.html">Intraday</a><a href="backtest.html">Backtest</a><a class="active" href="backtest-research.html">Research</a></nav>
+<div class="sub">FTSE 350 ex trusts · current-strategy historical replay</div>
+<h1>£30 rank-1 strategy · last 30 trading days</h1>
+<div class="sub">Generated {generated}</div>
+
+<div class="strategy"><strong>What this page tests:</strong> each day it recreates the rank-1 pre-market candidate using only the prior close's data, then waits for the current 15-minute opening-range breakout rules. If the trade confirms, £30 notional is entered at the confirming five-minute close. Full position exits at the displayed 2R target, stop, or the final bar before 09:30. Days with no qualifying breakout remain uninvested.</div>
+
 <div class="grid">
-<div class="stat"><div class="label">Signal days</div><div class="value">{len(dates)}</div></div>
-<div class="stat"><div class="label">Research days</div><div class="value">{len(train_dates)}</div></div>
-<div class="stat"><div class="label">Holdout days</div><div class="value">{len(test_dates)}</div></div>
-<div class="stat"><div class="label">Best holdout model</div><div class="value" style="font-size:15px">{html_lib.escape(best_name)}</div></div>
+<div class="stat"><div class="label">Trading days tested</div><div class="value">{len(results)}</div></div>
+<div class="stat"><div class="label">Trades taken</div><div class="value">{len(traded)}</div></div>
+<div class="stat"><div class="label">No-trade / missed days</div><div class="value">{len(no_trades)}</div></div>
+<div class="stat"><div class="label">Win rate</div><div class="value">{win_rate:.1f}%</div></div>
+<div class="stat"><div class="label">Net P/L</div><div class="value {'positive' if total_net >= 0 else 'negative'}">£{total_net:+.2f}</div></div>
+<div class="stat"><div class="label">End value vs £30/day stake</div><div class="value">£{30*len(traded)+total_net:.2f}</div></div>
 </div>
-{primary_html}
-<h2>Long-only model comparison: top five long candidates</h2>
-<div class="table-wrap"><table><thead><tr><th>Model</th><th>Full P/L</th><th>Full win</th><th>Full PF</th><th>Full DD</th><th>Research P/L</th><th>Holdout P/L</th><th>Holdout win</th><th>Holdout PF</th><th>vs current</th></tr></thead><tbody>{''.join(model_rows)}</tbody></table></div>
-<h2>Rank and direction breakdown — holdout period</h2>
-<div class="table-wrap"><table><thead><tr><th>Model</th><th>Selection</th><th>Signals</th><th>Executed</th><th>Wins</th><th>Win rate</th><th>P/L</th><th>Average R</th><th>PF</th><th>Drawdown</th></tr></thead><tbody>{''.join(ranking_rows)}</tbody></table></div>
-<h2>Long-only holdout factor evidence</h2>
-<div class="table-wrap"><table><thead><tr><th>Factor</th><th>Present n</th><th>Present avg</th><th>Absent avg</th><th>Effect</th><th>95% bootstrap interval</th><th>Confidence</th></tr></thead><tbody>{''.join(factor_rows)}</tbody></table></div>
-<p class="note">Headline model results use the five highest-ranked long candidates each day. “Rank 1 long” means the highest-scoring long candidate, even when a short candidate ranks above it overall. Short signals remain in a separate research row and do not affect long-only win rate, P/L or profit factor. Entry, stop, target, spread, commission and same-day exit rules remain identical. Daily bars cannot determine which occurred first when stop and target are both touched; those cases are scored as stops.</p>
+
+<div class="grid">
+<div class="stat"><div class="label">Winning trades</div><div class="value">{len(wins)}</div></div>
+<div class="stat"><div class="label">Losing trades</div><div class="value">{len(losses)}</div></div>
+<div class="stat"><div class="label">Profit factor</div><div class="value">{pf_text}</div></div>
+<div class="stat"><div class="label">Max drawdown</div><div class="value negative">£{dd:.2f}</div></div>
+<div class="stat"><div class="label">Stake per trade</div><div class="value">£30</div></div>
+<div class="stat"><div class="label">Cost assumption</div><div class="value">{SPREAD_BPS:.0f} bps</div></div>
+</div>
+
+<h2>Daily replay</h2>
+<div class="table-wrap"><table><thead><tr>
+<th>Date</th><th>Rank-1 stock</th><th>Bias</th><th>Outcome</th><th>Entry</th><th>Stop</th><th>2R</th><th>Exit</th><th>Net £</th><th>Return</th><th>Cumulative £</th>
+</tr></thead><tbody>{''.join(rows)}</tbody></table></div>
+
+<p class="note"><strong>Historical-news limitation:</strong> this replay deliberately does not use archived news sentiment because Yahoo's current headline search is not a reliable point-in-time archive. That prevents look-ahead bias. Historical entries therefore represent the technical B-grade form of the live strategy; the live page may upgrade a setup to A when a genuinely supportive current catalyst is present.</p>
+<p class="note">This is a mechanical research replay, not a prediction. Five-minute bars still cannot show the exact sequence of prices inside each candle; where a single candle touches both stop and target, the research assumes the stop occurred first.</p>
 </main></body></html>"""
 
 
-def main():
-    print("Running BACKTEST_RESEARCH_LONG_ONLY_RANK1_OUTPUT_FIX_2026_08_02")
-    print(f"Working directory: {os.getcwd()}")
-    print(f"Research output: {OUTPUT_PATH}")
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--days", type=int, default=None)
-    parser.add_argument("--start", type=str, default=None)
-    parser.add_argument("--end", type=str, default=None)
-    args = parser.parse_args()
+def main() -> int:
+    print("Fetching current FTSE 350 operating-company universe...")
+    constituents = scr.fetch_ftse250_constituents()
+    tickers = [scr.epic_to_yahoo(epic) for epic in constituents]
 
-    start = dt.date.fromisoformat(args.start) if args.start else None
-    end = dt.date.fromisoformat(args.end) if args.end else None
-    last_n = args.days if not (start or end) else None
-    if not (start or end or last_n):
-        last_n = BACKTEST_DAYS
+    print(f"Downloading daily history for {len(tickers)} tickers...")
+    daily_data = yf.download(
+        tickers,
+        period="6mo",
+        interval="1d",
+        group_by="ticker",
+        threads=True,
+        progress=False,
+        auto_adjust=False,
+    )
 
-    history = build_candidate_history(start=start, end=end, last_n=last_n)
-    dates = sorted(history)
-    if len(dates) < 10:
-        raise RuntimeError("At least 10 signal dates are required for a research/holdout split.")
+    # Use FTSE index dates as the session calendar.
+    calendar = normalise(
+        yf.download(
+            "^FTSE",
+            period="4mo",
+            interval="1d",
+            progress=False,
+            auto_adjust=False,
+        )
+    )
+    if calendar.empty:
+        raise RuntimeError("Unable to obtain FTSE trading calendar.")
 
-    split = max(1, min(len(dates) - 1, int(len(dates) * 0.70)))
-    train_dates = dates[:split]
-    test_dates = dates[split:]
-    model_names = list(next(iter(next(iter(history.values()))))["model_scores"].keys())
+    now = dt.datetime.now(UTC).astimezone(LONDON)
+    completed_dates = [
+        d.date()
+        for d in pd.DatetimeIndex(calendar.index)
+        if d.date() < now.date()
+    ]
 
-    results = {}
-    for model in model_names:
-        results[model] = {
-            "full": summary(selected_trades(history, model, dates, direction="Long", limit=5)),
-            "train": summary(selected_trades(history, model, train_dates, direction="Long", limit=5)),
-            "test": summary(selected_trades(history, model, test_dates, direction="Long", limit=5)),
+    if len(completed_dates) < DAYS + 1:
+        raise RuntimeError("Not enough completed trading sessions for 30-day research.")
+
+    trade_dates = completed_dates[-DAYS:]
+    calendar_dates = [d.date() for d in pd.DatetimeIndex(calendar.index)]
+
+    selections: list[tuple[dt.date, dt.date, dict[str, Any]]] = []
+    for trade_date in trade_dates:
+        idx = calendar_dates.index(trade_date)
+        if idx == 0:
+            continue
+        signal_date = calendar_dates[idx - 1]
+        print(f"Selecting rank 1 as of {signal_date} for trade date {trade_date}...")
+        pick = select_rank1(constituents, daily_data, signal_date)
+        if pick:
+            selections.append((trade_date, signal_date, pick))
+        else:
+            selections.append(
+                (
+                    trade_date,
+                    signal_date,
+                    {
+                        "epic": "—",
+                        "name": "No candidate",
+                        "direction": "—",
+                        "score": 0,
+                        "yahoo_ticker": "",
+                    },
+                )
+            )
+
+    unique_tickers = sorted(
+        {
+            pick["yahoo_ticker"]
+            for _, _, pick in selections
+            if pick.get("yahoo_ticker")
         }
+    )
 
-    ranking_results = {}
-    for model in model_names:
-        ranking_results[model] = {
-            "Rank 1 long": summary(selected_trades(history, model, test_dates, direction="Long", limit=1)),
-            "Ranks 2–5 long": summary(selected_trades(history, model, test_dates, direction="Long", limit=4, skip_first=1)),
-            "Top 5 long": summary(selected_trades(history, model, test_dates, direction="Long", limit=5)),
-            "Top 5 short — research only": summary(selected_trades(history, model, test_dates, direction="Short", limit=5)),
-        }
+    intraday_cache: dict[str, pd.DataFrame] = {}
+    daily_cache: dict[str, pd.DataFrame] = {}
 
-    factors = factor_analysis(history, test_dates)
-    report = render_html(history, dates, train_dates, test_dates, results, ranking_results, factors)
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
-        f.write(report)
+    print(f"Downloading 5-minute history for {len(unique_tickers)} unique rank-1 stocks...")
+    for ticker in unique_tickers:
+        intraday_cache[ticker] = london_intraday(
+            yf.download(
+                ticker,
+                period="60d",
+                interval="5m",
+                progress=False,
+                auto_adjust=False,
+                prepost=False,
+            )
+        )
+        daily_cache[ticker] = ticker_frame(daily_data, ticker)
 
-    print("\nMODEL COMPARISON — HOLDOUT PERIOD")
-    baseline = results["Current score"]["test"]
-    for model, result in results.items():
-        test = result["test"]
-        print(f"{model:18} P/L £{test['net_pnl']:+.2f} | win {test['win_rate']:.1f}% | PF {fmt_pf(test['profit_factor'])} | vs baseline £{test['net_pnl'] - baseline['net_pnl']:+.2f}")
-    print("\nRANK 1 LONG — HOLDOUT PERIOD")
-    for model in model_names:
-        rank1 = ranking_results[model]["Rank 1 long"]
-        print(f"{model:18} {rank1['wins']}/{rank1['executed']} winners | win {rank1['win_rate']:.1f}% | P/L £{rank1['net_pnl']:+.2f} | PF {fmt_pf(rank1['profit_factor'])}")
-    if factors:
-        p = factors[0]
-        print(f"\nPrimary long-only factor: {p['factor']} | effect {p['effect']:+.2f}R | confidence {p['confidence']}")
+    results: list[dict[str, Any]] = []
+    for trade_date, signal_date, pick in selections:
+        ticker = pick.get("yahoo_ticker")
+        if not ticker:
+            results.append(
+                {
+                    "date": trade_date,
+                    "signal_date": signal_date,
+                    "epic": "—",
+                    "name": "No pre-market candidate",
+                    "direction": "—",
+                    "watch_score": 0,
+                    "status": "NO TRADE",
+                    "reason": "No rank-1 candidate.",
+                    "entry": None,
+                    "stop": None,
+                    "target": None,
+                    "exit": None,
+                    "gross_pnl": 0.0,
+                    "cost": 0.0,
+                    "net_pnl": 0.0,
+                    "return_pct": 0.0,
+                    "equity": None,
+                }
+            )
+            continue
+
+        print(f"Replaying {trade_date}: {pick['epic']} {pick['direction']}...")
+        results.append(
+            simulate_day(
+                pick,
+                trade_date,
+                signal_date,
+                daily_cache[ticker],
+                intraday_cache[ticker],
+            )
+        )
+
+    generated = now.strftime("%a %d %b %Y · %H:%M %Z")
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_PATH.write_text(render(results, generated), encoding="utf-8")
     print(f"Wrote {OUTPUT_PATH}")
+    return 0
 
 
 if __name__ == "__main__":
