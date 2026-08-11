@@ -789,6 +789,77 @@ body {{ background:{INK}; color:{PAPER}; font-family:'Inter',sans-serif; margin:
 
 
 
+
+def render_watchlist_html(results, capital, risk_pct, generated_at):
+    risk_amount = capital * risk_pct / 100
+    rows = []
+    for i, r in enumerate(results):
+        direction_colour = BULL if r["direction"] == "Long" else BEAR
+        rows.append(f"""
+        <div style="background:{PANEL};border:1px solid {HAIRLINE};border-radius:8px;margin-bottom:12px;padding:16px 18px;">
+          <div style="display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap;">
+            <div>
+              <div><span style="font-family:monospace;font-weight:600;font-size:15px;">{r['epic']}</span>
+              <span style="font-size:12px;color:{MUTED};"> {r['name']}</span></div>
+              <div style="font-size:12px;color:{direction_colour};margin-top:4px;">
+                {r['direction']} watch · liquid trend/volatility candidate
+              </div>
+            </div>
+            <div style="text-align:right;"><div style="font-size:10px;color:{MUTED};text-transform:uppercase;">Watch rank</div>
+            <div style="font-size:24px;color:{BRASS};">{i+1}</div></div>
+          </div>
+          <div style="margin-top:12px;background:{INK};border:1px solid {HAIRLINE};border-radius:6px;padding:12px;">
+            <div style="font-size:11px;color:{BRASS};text-transform:uppercase;letter-spacing:.06em;">Why it is on the list</div>
+            <div style="font-size:13px;line-height:1.55;margin-top:5px;">
+              5-day momentum {r['daily_momentum_5d_pct']:+.2f}% ·
+              20-day momentum {r['daily_momentum_20d_pct']:+.2f}% ·
+              ATR {r['atr14_pct']:.2f}% ·
+              average daily turnover £{r['avg_daily_turnover_gbp']:,.0f} ·
+              latest daily volume {r['daily_volume_ratio']:.2f}× normal.
+            </div>
+          </div>
+          <div style="font-size:12px;color:{MUTED};line-height:1.55;margin-top:10px;">
+            <strong style="color:{PAPER};">What to look for after 08:15:</strong>
+            a break of the 08:00–08:15 opening range in the {r['direction'].lower()} direction,
+            while price remains on the correct side of VWAP with healthy relative volume.
+          </div>
+        </div>""")
+
+    rows_html = "".join(rows) if rows else (
+        f'<div style="color:{MUTED};font-size:14px;padding:20px;text-align:center;">'
+        "No strong pre-market watchlist candidates were found today.</div>"
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FTSE 350 pre-market day-trading watchlist</title>
+<style>
+body {{ background:{INK}; color:{PAPER}; font-family:Arial,sans-serif; margin:0; }}
+.wrap {{ max-width:820px; margin:0 auto; padding:30px 20px 60px; }}
+.site-nav {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }}
+.site-nav a {{ text-decoration:none; border:1px solid {HAIRLINE}; border-radius:999px; padding:8px 12px; color:{PAPER}; font-size:13px; }}
+.site-nav a.active {{ border-color:{BRASS}; color:{BRASS}; }}
+</style></head><body><div class="wrap">
+<nav class="site-nav"><a class="active" href="index.html">Pre-market</a><a href="intraday.html">Intraday</a><a href="backtest.html">Backtest</a><a href="backtest-research.html">Research</a></nav>
+<div style="border-bottom:1px solid {HAIRLINE};padding-bottom:18px;margin-bottom:22px;">
+  <div style="font-size:11px;letter-spacing:.12em;color:{SALMON};text-transform:uppercase;">FTSE 350 ex trusts · pre-market day-trading watchlist</div>
+  <h1 style="font-size:28px;margin:5px 0 0;">Today's stocks to watch</h1>
+  <div style="font-size:12px;color:{MUTED};margin-top:8px;">{generated_at}</div>
+</div>
+<div style="background:{PANEL};border:1px solid {HAIRLINE};border-radius:8px;padding:14px;margin-bottom:18px;font-size:13px;line-height:1.55;">
+<strong style="color:{BRASS};">Strategy for today:</strong>
+This page does not tell you to buy or short at 07:00. It identifies the strongest liquid long/short candidates to monitor.
+The first actual trade decision comes after 08:15, when the intraday page has a complete 15-minute opening range.
+</div>
+<div style="font-size:12px;color:{MUTED};margin-bottom:18px;">
+Capital £{capital:,.2f} · maximum risk £{risk_amount:.2f} per trade ({risk_pct:g}%).
+</div>
+{rows_html}
+<p style="font-size:11.5px;color:{MUTED};line-height:1.6;margin-top:24px;border-top:1px solid {HAIRLINE};padding-top:16px;">
+Pre-market ranking prioritises liquidity, ATR and recent directional momentum. It is a watchlist, not an entry signal.
+</p>
+</div></body></html>"""
+
 def _json_safe(value):
     """Convert numpy/pandas scalars into JSON-safe Python values."""
     if value is None:
@@ -820,7 +891,7 @@ def embed_daily_shortlist(report_html, intraday_pool, generated_at_iso):
     payload = {
         "schema_version": 2,
         "generated_at_utc": generated_at_iso,
-        "selection": "liquid_long_trend_volume_pool",
+        "selection": "liquid_long_short_trend_volume_pool",
         "candidates": candidates,
     }
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
@@ -873,18 +944,18 @@ def main():
             results.append(r)
 
     results.sort(key=lambda x: x["score"], reverse=True)
-    top5 = results[:5]
     intraday_candidates.sort(key=lambda x: x["score"], reverse=True)
     intraday_pool = intraday_candidates[:INTRADAY_POOL_SIZE]
+    top5 = intraday_pool[:10]
 
     print(
-        f"Scored {len(results)} candlestick setups; writing top {len(top5)}. "
+        f"Built pre-market watchlist with {len(top5)} visible candidates. "
         f"Saved {len(intraday_pool)} liquid long candidates for intraday review."
     )
 
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.strftime("%a %d %b %Y, %H:%M UTC")
-    report_html = render_html(top5, CAPITAL, RISK_PCT, generated_at)
+    report_html = render_watchlist_html(top5, CAPITAL, RISK_PCT, generated_at)
     report_html = embed_daily_shortlist(
         report_html, intraday_pool, generated_dt.isoformat()
     )
