@@ -53,7 +53,10 @@ MIN_RECOMMENDATION_SCORE = env_float("MIN_ACTIONABLE_SCORE", 68)
 NEWS_COUNT = env_int("NEWS_COUNT", 3)
 ATR_STOP_MULTIPLIER = env_float("ATR_STOP_MULTIPLIER", 0.50)
 MIN_STOP_PCT = env_float("MIN_STOP_PCT", 0.75)
-MIN_BARS_FULL_CONFIDENCE = env_int("MIN_BARS_FULL_CONFIDENCE", 6)
+OPENING_RANGE_MINUTES = env_int("OPENING_RANGE_MINUTES", 15)
+MIN_READY_VOLUME_RATIO = env_float("MIN_READY_VOLUME_RATIO", 0.75)
+MIN_A_GRADE_VOLUME_RATIO = env_float("MIN_A_GRADE_VOLUME_RATIO", 1.10)
+MAX_CHASE_R = env_float("MAX_CHASE_R", 0.30)
 
 ROOT = Path(__file__).resolve().parent
 DAILY_INDEX_PATH = ROOT / "docs" / "index.html"
@@ -93,12 +96,11 @@ def scan_stage(now: dt.datetime) -> tuple[str, dt.time, int]:
     cap = now.replace(hour=9, minute=30, second=0, microsecond=0)
     completed = min(completed, cap)
     expected_bars = max(1, int((completed - market_open).total_seconds() // 300))
-    return (
-        f"OPENING SESSION UPDATE — {expected_bars} completed 5-minute bar"
-        f"{'s' if expected_bars != 1 else ''}",
-        completed.time(),
-        expected_bars,
-    )
+    if expected_bars < 3:
+        stage = f"OPENING OBSERVATION — {expected_bars} completed 5-minute bar{'s' if expected_bars != 1 else ''}"
+    else:
+        stage = f"15-MIN OPENING-RANGE STRATEGY — {expected_bars} completed 5-minute bars"
+    return stage, completed.time(), expected_bars
 
 
 def normalise(frame: pd.DataFrame) -> pd.DataFrame:
@@ -292,17 +294,41 @@ def daily_atr_from_history(ticker: str, period: int = 14) -> float | None:
     return float(atr) if finite_number(atr) and float(atr) > 0 else None
 
 
-def confidence_cap_for_bars(bars: int) -> float:
-    """Do not present a one-candle observation as a 100/100 setup."""
-    if bars <= 1:
-        return 78.0
-    if bars == 2:
-        return 84.0
-    if bars == 3:
-        return 90.0
-    if bars < MIN_BARS_FULL_CONFIDENCE:
-        return 95.0
-    return 100.0
+def classify_news(news_items: list[dict[str, str]]) -> tuple[str, int]:
+    if not news_items:
+        return "No fresh catalyst found", 0
+
+    text = " ".join(item.get("title", "").lower() for item in news_items)
+    positive_terms = (
+        "upgrade", "raises guidance", "beats", "record", "contract win",
+        "acquisition", "takeover", "bid", "profit rises", "strong trading",
+        "dividend increase", "buyback",
+    )
+    negative_terms = (
+        "downgrade", "profit warning", "cuts guidance", "misses", "investigation",
+        "regulator", "loss widens", "dividend cut", "placing", "rights issue",
+    )
+    pos = sum(term in text for term in positive_terms)
+    neg = sum(term in text for term in negative_terms)
+    if pos > neg and pos > 0:
+        return "Supportive catalyst", 1
+    if neg > pos and neg > 0:
+        return "Adverse catalyst", -1
+    return "Recent news, no clear directional catalyst", 0
+
+
+def morning_structure(opening: pd.DataFrame, direction: str) -> tuple[bool, str]:
+    if len(opening) < 5:
+        return False, "Not enough post-opening-range bars yet to confirm structure"
+    post = opening.iloc[3:]
+    if direction == "Long":
+        lows = post["Low"].astype(float)
+        ok = lows.iloc[-1] >= lows.iloc[0]
+        return ok, "Higher-low structure confirmed" if ok else "Higher lows not confirmed"
+    highs = post["High"].astype(float)
+    ok = highs.iloc[-1] <= highs.iloc[0]
+    return ok, "Lower-high structure confirmed" if ok else "Lower highs not confirmed"
+
 
 def assess(
     candidate: dict[str, Any],
@@ -314,28 +340,30 @@ def assess(
     direction = str(candidate.get("direction", "")).title()
     ticker = str(candidate.get("yahoo_ticker") or f"{candidate['epic']}.L")
     daily_atr = daily_atr_from_history(ticker)
+
     base = {
         "epic": candidate.get("epic", ticker.replace(".L", "")),
         "name": candidate.get("name", ""),
         "ticker": ticker,
         "direction": direction,
-        "daily_score": float(candidate.get("score", 0)),
+        "daily_score": float(candidate.get("score", 0) or 0),
         "daily_pattern": candidate.get("pattern", ""),
-        "status": "REJECTED",
-        "score": 0.0,
+        "status": "NO TRADE",
+        "grade": "NO TRADE",
         "recommendation": "No trade.",
-        "passed": [],
+        "why": [],
         "failed": [],
         "stage": stage_name,
     }
 
     if direction not in {"Long", "Short"}:
-        base["failed"] = ["Daily candidate has no valid long or short direction."]
+        base["failed"] = ["No valid long/short daily bias."]
         return base
 
     frame = history(ticker)
     if frame.empty:
         base["status"] = "DATA ONLY"
+        base["grade"] = "DATA ONLY"
         base["failed"] = ["No intraday market data was available."]
         return base
 
@@ -345,286 +373,227 @@ def assess(
         (today_frame.index.time >= dt.time(8, 0))
         & (today_frame.index.time < window_end)
     ]
-    trigger_window = today_frame[
-        (today_frame.index.time >= dt.time(8, 0))
-        & (today_frame.index.time < dt.time(8, 5))
-    ]
     bars = len(opening)
     base["bars"] = bars
 
     pc = prior_close(frame, today)
-    if opening.empty or trigger_window.empty or pc is None or pc <= 0:
+    if opening.empty or pc is None or pc <= 0:
         base["status"] = "DATA ONLY"
+        base["grade"] = "DATA ONLY"
         base["failed"] = ["Previous close or opening data was unavailable."]
         return base
 
+    opening_range = today_frame[
+        (today_frame.index.time >= dt.time(8, 0))
+        & (today_frame.index.time < dt.time(8, OPENING_RANGE_MINUTES))
+    ]
+
+    news_items = recent_news(candidate)
+
+    if len(opening_range) < 3:
+        current = float(opening.iloc[-1]["Close"])
+        base.update({
+            "status": "WATCH",
+            "grade": "WATCH",
+            "recommendation": (
+                "Do not trade yet. Wait for three completed five-minute candles "
+                "to establish the 08:00–08:15 opening range."
+            ),
+            "current": current,
+            "current_time": opening.index[-1],
+            "opening_candles": [
+                {"open": float(r["Open"]), "high": float(r["High"]),
+                 "low": float(r["Low"]), "close": float(r["Close"]),
+                 "time": idx.strftime("%H:%M")}
+                for idx, r in opening.iterrows()
+            ],
+            "news": news_items,
+        })
+        return base
+
     first_open = float(opening.iloc[0]["Open"])
+    close = float(opening.iloc[-1]["Close"])
+    current = close
+    current_time = opening.index[-1]
     high = float(opening["High"].max())
     low = float(opening["Low"].min())
-    close = float(opening.iloc[-1]["Close"])
     volume = float(opening["Volume"].fillna(0).sum())
 
     typical = (opening["High"] + opening["Low"] + opening["Close"]) / 3
     volume_series = opening["Volume"].fillna(0)
-    vwap = (
-        float((typical * volume_series).sum() / volume_series.sum())
-        if volume_series.sum() > 0
-        else close
-    )
+    vwap = float((typical * volume_series).sum() / volume_series.sum()) if volume_series.sum() > 0 else close
 
     gap_pct = ((first_open - pc) / pc) * 100
-    range_pct = ((high - low) / pc) * 100
     move_pct = ((close - pc) / pc) * 100
-    location_pct = ((close - low) / max(high - low, 1e-9)) * 100
+    range_pct = ((high - low) / pc) * 100
     vwap_distance_pct = abs((close - vwap) / vwap) * 100 if vwap else 0.0
 
     average_volume = prior_window_volume(frame, today, window_end)
-    volume_ratio = (
-        volume / average_volume
-        if average_volume is not None and average_volume > 0
-        else None
-    )
+    volume_ratio = volume / average_volume if average_volume and average_volume > 0 else None
     turnover_gbp = volume * gbx_to_gbp(close)
 
-    completed = today_frame[
-        (today_frame.index.time >= dt.time(8, 0))
-        & (today_frame.index.time < window_end)
-    ]
-    current = float(completed.iloc[-1]["Close"])
-    current_time = completed.index[-1]
-
-    trigger_high = float(trigger_window["High"].max())
-    trigger_low = float(trigger_window["Low"].min())
+    or_high = float(opening_range["High"].max())
+    or_low = float(opening_range["Low"].min())
 
     if direction == "Long":
-        trigger = trigger_high * (1 + ENTRY_BUFFER_PCT / 100)
-        structure_stop = low
-        atr_stop_distance = (daily_atr or 0.0) * ATR_STOP_MULTIPLIER
-        minimum_stop_distance = trigger * MIN_STOP_PCT / 100
-        stop_distance = max(
-            trigger - structure_stop,
-            atr_stop_distance,
-            minimum_stop_distance,
-        )
-        stop = trigger - stop_distance
-        initial_risk = trigger - stop
-        maximum_entry = trigger + MAX_ENTRY_EXTENSION_R * initial_risk
-        risk = initial_risk
-        target = trigger + TARGET_R * initial_risk
-        correct_side_previous_close = close > pc
-        correct_side_vwap = close > vwap
-        favourable_location = location_pct >= 58
-        triggered = current >= trigger
-        beyond_entry = current > maximum_entry
+        trigger = or_high * (1 + ENTRY_BUFFER_PCT / 100)
+        side_prev = current > pc
+        side_vwap = current > vwap
+        broken = current >= trigger
+        structure_stop = or_low
     else:
-        trigger = trigger_low * (1 - ENTRY_BUFFER_PCT / 100)
-        structure_stop = high
-        atr_stop_distance = (daily_atr or 0.0) * ATR_STOP_MULTIPLIER
-        minimum_stop_distance = trigger * MIN_STOP_PCT / 100
-        stop_distance = max(
-            structure_stop - trigger,
-            atr_stop_distance,
-            minimum_stop_distance,
-        )
+        trigger = or_low * (1 - ENTRY_BUFFER_PCT / 100)
+        side_prev = current < pc
+        side_vwap = current < vwap
+        broken = current <= trigger
+        structure_stop = or_high
+
+    atr_distance = (daily_atr or 0.0) * ATR_STOP_MULTIPLIER
+    min_distance = trigger * MIN_STOP_PCT / 100
+
+    if direction == "Long":
+        stop_distance = max(trigger - structure_stop, atr_distance, min_distance)
+        stop = trigger - stop_distance
+        target_1r = trigger + stop_distance
+        target_2r = trigger + TARGET_R * stop_distance
+        max_entry = trigger + MAX_CHASE_R * stop_distance
+        beyond = current > max_entry
+    else:
+        stop_distance = max(structure_stop - trigger, atr_distance, min_distance)
         stop = trigger + stop_distance
-        initial_risk = stop - trigger
-        maximum_entry = trigger - MAX_ENTRY_EXTENSION_R * initial_risk
-        risk = initial_risk
-        target = trigger - TARGET_R * initial_risk
-        correct_side_previous_close = close < pc
-        correct_side_vwap = close < vwap
-        favourable_location = location_pct <= 42
-        triggered = current <= trigger
-        beyond_entry = current < maximum_entry
+        target_1r = trigger - stop_distance
+        target_2r = trigger - TARGET_R * stop_distance
+        max_entry = trigger - MAX_CHASE_R * stop_distance
+        beyond = current < max_entry
 
-    passed: list[str] = []
-    failed: list[str] = []
-    score = 0.0
+    structure_ok, structure_text = morning_structure(opening, direction)
+    news_label, catalyst_bias = classify_news(news_items)
 
-    def check(condition: bool, points: float, yes: str, no: str) -> None:
-        nonlocal score
-        if condition:
-            score += points
-            passed.append(yes)
-        else:
-            failed.append(no)
+    why, failed = [], []
 
-    check(
-        bars >= expected_bars,
-        10,
-        f"{bars} completed five-minute bars were available.",
-        f"Only {bars} of {expected_bars} required bars were available.",
-    )
-    check(
-        correct_side_previous_close,
-        14,
-        f"Price moved in the intended {direction.lower()} direction from yesterday's close.",
-        "Price did not move in the intended direction from yesterday's close.",
-    )
-    check(
-        correct_side_vwap,
-        16,
-        f"Price was on the correct side of VWAP for a {direction.lower()}.",
-        f"Price was on the wrong side of VWAP for a {direction.lower()}.",
-    )
-    check(
-        abs(gap_pct) <= MAX_GAP_PCT,
-        8,
-        "The opening gap was controlled.",
-        f"The opening gap of {gap_pct:+.2f}% was excessive.",
-    )
-    check(
-        MIN_RANGE_PCT <= range_pct <= MAX_RANGE_PCT,
-        10,
-        "The early opening range was usable.",
-        f"The opening range of {range_pct:.2f}% was unsuitable.",
-    )
-    check(
-        favourable_location,
-        12,
-        "Price held near the favourable end of the opening range.",
-        "Price did not hold near the favourable end of the opening range.",
-    )
-    check(
-        volume_ratio is not None and volume_ratio >= MIN_VOLUME_RATIO,
-        10,
-        f"Volume was {volume_ratio:.2f}× the comparable opening window."
-        if volume_ratio is not None
-        else "",
-        "Comparable opening volume was unavailable or too weak.",
-    )
-    check(
-        turnover_gbp >= MIN_OPENING_TURNOVER_GBP,
-        10,
-        f"Opening turnover was about £{turnover_gbp:,.0f}.",
-        f"Opening turnover of about £{turnover_gbp:,.0f} was too low.",
-    )
-    check(
-        vwap_distance_pct <= MAX_VWAP_DISTANCE_PCT,
-        5,
-        "Price was not excessively stretched from VWAP.",
-        f"Price was {vwap_distance_pct:.2f}% from VWAP and overextended.",
-    )
-    check(
-        initial_risk > 0 and risk > 0,
-        5,
-        "The volatility-aware stop structure was valid.",
-        "The stop structure was invalid.",
-    )
+    def flag(cond, yes, no):
+        if cond:
+            why.append(yes)
+            return True
+        failed.append(no)
+        return False
 
-    confidence_cap = confidence_cap_for_bars(bars)
-    if score > confidence_cap:
-        passed.append(
-            f"Confidence capped at {confidence_cap:.0f}/100 because only {bars} "
-            f"completed five-minute bar{'s' if bars != 1 else ''} were available."
-        )
-        score = confidence_cap
+    trend_ok = flag(side_prev, "Price is moving in the daily-bias direction versus yesterday's close.",
+                    "Price is not moving in the daily-bias direction versus yesterday's close.")
+    vwap_ok = flag(side_vwap, "Price is on the correct side of VWAP.",
+                   "Price is on the wrong side of VWAP.")
+    vol_ok = flag(volume_ratio is not None and volume_ratio >= MIN_READY_VOLUME_RATIO,
+                  f"Relative opening volume is {volume_ratio:.2f}×." if volume_ratio is not None else "Relative volume confirmed.",
+                  "Opening volume is too weak or unavailable.")
+    liquidity_ok = flag(turnover_gbp >= MIN_OPENING_TURNOVER_GBP,
+                        f"Opening turnover is about £{turnover_gbp:,.0f}.",
+                        f"Opening turnover of about £{turnover_gbp:,.0f} is too low.")
+    structure_pass = flag(structure_ok, structure_text + ".", structure_text + ".")
+    gap_ok = flag(abs(gap_pct) <= MAX_GAP_PCT, "Opening gap is controlled.",
+                  f"Opening gap of {gap_pct:+.2f}% is too large.")
+    stretch_ok = flag(vwap_distance_pct <= MAX_VWAP_DISTANCE_PCT,
+                      "Price is not excessively stretched from VWAP.",
+                      f"Price is {vwap_distance_pct:.2f}% from VWAP and looks extended.")
 
-    mandatory_failure = (
-        bars < expected_bars
-        or not correct_side_previous_close
-        or not correct_side_vwap
-        or abs(gap_pct) > MAX_GAP_PCT
-        or range_pct < MIN_RANGE_PCT
-        or range_pct > MAX_RANGE_PCT
-        or turnover_gbp < MIN_OPENING_TURNOVER_GBP
-        or initial_risk <= 0
-        or risk <= 0
+    catalyst_supports = (
+        (catalyst_bias == 1 and direction == "Long")
+        or (catalyst_bias == -1 and direction == "Short")
     )
+    catalyst_conflicts = (
+        (catalyst_bias == -1 and direction == "Long")
+        or (catalyst_bias == 1 and direction == "Short")
+    )
+    if catalyst_supports:
+        why.append("Recent headline catalyst supports the technical direction.")
+    elif catalyst_conflicts:
+        failed.append("Recent headline catalyst conflicts with the technical direction.")
+    else:
+        why.append(news_label + ".")
 
-    if bars < expected_bars:
-        status = "DATA ONLY"
+    hard_fail = not (trend_ok and vwap_ok and liquidity_ok and gap_ok and stretch_ok) or catalyst_conflicts
+    ready = not hard_fail and vol_ok and structure_pass
+
+    if hard_fail:
+        status, grade = "FAILED SETUP", "NO TRADE"
+        recommendation = "No trade — a core setup condition has failed."
+    elif beyond:
+        status, grade = "DON'T CHASE", "MISSED"
         recommendation = (
-            f"No recommendation — only {bars} of {expected_bars} required bars "
-            f"were available for the {stage_name.lower()}."
+            f"Breakout occurred but price is beyond the acceptable entry of "
+            f"£{gbx_to_gbp(max_entry):.2f}. Stand aside."
         )
-    elif mandatory_failure:
-        status = "REJECTED"
-        recommendation = "No trade. A mandatory tradability check failed."
-    elif beyond_entry:
-        status = "DO NOT CHASE"
+    elif broken and ready:
+        strong_volume = volume_ratio is not None and volume_ratio >= MIN_A_GRADE_VOLUME_RATIO
+        grade = "A" if strong_volume and catalyst_supports else "B"
+        status = f"ENTER {direction.upper()}"
         recommendation = (
-            f"The {direction.lower()} move has already travelled beyond the "
-            f"maximum acceptable entry of £{gbx_to_gbp(maximum_entry):.2f}."
+            f"{grade}-grade breakout is live. Entry from £{gbx_to_gbp(trigger):.2f}; "
+            f"do not chase beyond £{gbx_to_gbp(max_entry):.2f}."
         )
-    elif triggered and score >= MIN_RECOMMENDATION_SCORE:
-        status = "ACTIONABLE"
-        recommendation = (
-            f"{direction} setup triggered. Current completed-bar price is about "
-            f"£{gbx_to_gbp(current):.2f}; verify the live quote and spread."
-        )
-    elif score >= MIN_RECOMMENDATION_SCORE:
-        status = "WAIT FOR BREAK"
+    elif ready:
+        strong_volume = volume_ratio is not None and volume_ratio >= MIN_A_GRADE_VOLUME_RATIO
+        grade = "A" if strong_volume and catalyst_supports else "B"
+        status = "READY — WAIT FOR BREAK"
         relation = "above" if direction == "Long" else "below"
         recommendation = (
-            f"Valid conditional {direction.lower()} setup. Enter only on a clean "
-            f"move {relation} £{gbx_to_gbp(trigger):.2f}; do not chase beyond "
-            f"£{gbx_to_gbp(maximum_entry):.2f}."
+            f"{grade}-grade setup. Wait for a clean break {relation} "
+            f"£{gbx_to_gbp(trigger):.2f}. Do not enter before the break."
         )
     else:
-        status = "REJECTED"
-        recommendation = "No trade. The setup was not strong enough overall."
+        status, grade = "WATCH", "WATCH"
+        recommendation = (
+            "Potential setup, but confirmation is incomplete. Wait for volume/structure "
+            "to improve before considering the opening-range break."
+        )
 
     risk_budget = CAPITAL * RISK_PCT / 100
-    risk_gbp = gbx_to_gbp(risk) if risk > 0 else 0
+    risk_gbp = gbx_to_gbp(stop_distance) if stop_distance > 0 else 0
     current_gbp = gbx_to_gbp(current)
-    shares = max(
-        0,
-        min(
-            math.floor(risk_budget / risk_gbp) if risk_gbp > 0 else 0,
-            math.floor(CAPITAL / current_gbp) if current_gbp > 0 else 0,
-        ),
-    )
-
-    news_items = recent_news(candidate)
+    shares = max(0, min(
+        math.floor(risk_budget / risk_gbp) if risk_gbp > 0 else 0,
+        math.floor(CAPITAL / current_gbp) if current_gbp > 0 else 0,
+    ))
 
     opening_candles = [
-        {
-            "open": float(row["Open"]),
-            "high": float(row["High"]),
-            "low": float(row["Low"]),
-            "close": float(row["Close"]),
-            "time": idx.strftime("%H:%M"),
-        }
-        for idx, row in opening.iterrows()
+        {"open": float(r["Open"]), "high": float(r["High"]),
+         "low": float(r["Low"]), "close": float(r["Close"]),
+         "time": idx.strftime("%H:%M")}
+        for idx, r in opening.iterrows()
     ]
 
-    base.update(
-        {
-            "opening_candles": opening_candles,
-            "news": news_items,
-            "status": status,
-            "recommendation": recommendation,
-            "score": score,
-            "passed": passed,
-            "failed": failed,
-            "previous_close": pc,
-            "gap_pct": gap_pct,
-            "move_pct": move_pct,
-            "range_pct": range_pct,
-            "close": close,
-            "vwap": vwap,
-            "location_pct": location_pct,
-            "volume_ratio": volume_ratio,
-            "turnover_gbp": turnover_gbp,
-            "current": current,
-            "current_time": current_time,
-            "trigger": trigger,
-            "maximum_entry": maximum_entry,
-            "stop": stop,
-            "target": target,
-            "daily_atr": daily_atr,
-            "stop_distance": initial_risk,
-            "atr_stop_distance": atr_stop_distance,
-            "minimum_stop_distance": minimum_stop_distance,
-            "structure_stop": structure_stop,
-            "shares": shares,
-            "position_value": shares * current_gbp,
-            "planned_risk": shares * risk_gbp,
-        }
-    )
+    base.update({
+        "opening_candles": opening_candles,
+        "news": news_items,
+        "news_label": news_label,
+        "status": status,
+        "grade": grade,
+        "recommendation": recommendation,
+        "why": why,
+        "failed": failed,
+        "previous_close": pc,
+        "gap_pct": gap_pct,
+        "move_pct": move_pct,
+        "range_pct": range_pct,
+        "close": close,
+        "vwap": vwap,
+        "volume_ratio": volume_ratio,
+        "turnover_gbp": turnover_gbp,
+        "current": current,
+        "current_time": current_time,
+        "opening_range_high": or_high,
+        "opening_range_low": or_low,
+        "trigger": trigger,
+        "maximum_entry": max_entry,
+        "stop": stop,
+        "target_1r": target_1r,
+        "target": target_2r,
+        "daily_atr": daily_atr,
+        "stop_distance": stop_distance,
+        "shares": shares,
+        "position_value": shares * current_gbp,
+        "planned_risk": shares * risk_gbp,
+    })
     return base
-
 
 def money(value: Any) -> str:
     return f"£{gbx_to_gbp(float(value)):.2f}" if finite(value) else "—"
@@ -696,49 +665,49 @@ def candlestick_svg(candles: list[dict[str, Any]]) -> str:
 
 
 def card(item: dict[str, Any], nap: bool = False) -> str:
-    label = ("NAP — " if nap else "") + str(item["status"])
-    direction_colour = BULL if item["direction"] == "Long" else BEAR
-    status_colour = (
-        direction_colour
-        if item["status"] == "ACTIONABLE"
-        else BRASS
-    )
-    passed = "".join(
-        f"<li>{html_lib.escape(value)}</li>" for value in item.get("passed", [])
-    ) or "<li>None</li>"
-    failed = "".join(
-        f"<li>{html_lib.escape(value)}</li>" for value in item.get("failed", [])
-    ) or "<li>None</li>"
+    direction_colour = BULL if item.get("direction") == "Long" else BEAR
+    badge = f"{'NAP — ' if nap else ''}{item.get('status','')}"
+    why = "".join(f"<li>{html_lib.escape(v)}</li>" for v in item.get("why", [])) or "<li>None</li>"
+    failed = "".join(f"<li>{html_lib.escape(v)}</li>" for v in item.get("failed", [])) or "<li>None</li>"
     volume_ratio = item.get("volume_ratio")
     volume_text = f"{volume_ratio:.2f}×" if finite(volume_ratio) else "—"
 
     return f"""
 <section class="pick">
 <div class="pick-head"><div>
-<strong class="epic">{html_lib.escape(str(item['epic']))}</strong>
-<span class="name">{html_lib.escape(str(item['name']))}</span>
-<div class="pattern" style="color:{direction_colour}">{item['direction']} · {html_lib.escape(str(item.get('daily_pattern','')))}</div>
-</div><div class="score"><span style="color:{status_colour}">{html_lib.escape(label)}</span><strong>{item['score']:.0f}/100</strong></div></div>
-<p class="recommendation" data-original="{html_lib.escape(item['recommendation'], quote=True)}">{html_lib.escape(item['recommendation'])}</p>
-<div class="chart-wrap"><div class="chart-title">Opening price action — all completed 5-minute bars</div>{candlestick_svg(item.get("opening_candles", []))}</div>
-{news_html(item)}
-<div class="metrics">
-<div><span>Latest completed price</span><strong>{money(item.get('current'))} at {item.get('current_time').strftime('%H:%M') if item.get('current_time') else '—'}</strong></div>
-<div><span>Entry trigger</span><strong>{money(item.get('trigger'))}</strong></div>
-<div><span>Maximum entry</span><strong>{money(item.get('maximum_entry'))}</strong></div>
-<div><span>Stop / 2R target</span><strong>{money(item.get('stop'))} / {money(item.get('target'))}</strong></div>
-<div><span>Opening gap</span><strong>{item.get('gap_pct',0):+.2f}%</strong></div>
-<div><span>Opening move / range</span><strong>{item.get('move_pct',0):+.2f}% / {item.get('range_pct',0):.2f}%</strong></div>
-<div><span>Close / VWAP</span><strong>{money(item.get('close'))} / {money(item.get('vwap'))}</strong></div>
-<div><span>Relative volume / turnover</span><strong>{volume_text} / £{item.get('turnover_gbp',0):,.0f}</strong></div>
-<div><span>Indicative size</span><strong>{item.get('shares',0)} shares</strong></div>
-<div><span>Position value / risk</span><strong>£{item.get('position_value',0):,.2f} / £{item.get('planned_risk',0):,.2f}</strong></div>
-</div>
-<details><summary>Assessment details</summary><div class="detail-grid">
-<div><h3>Passed</h3><ul>{passed}</ul></div>
-<div><h3>Failed or cautions</h3><ul>{failed}</ul></div>
-</div></details></section>"""
+<strong class="epic">{html_lib.escape(str(item.get('epic','')))}</strong>
+<span class="name">{html_lib.escape(str(item.get('name','')))}</span>
+<div class="pattern" style="color:{direction_colour}">{item.get('direction','')} · 15-minute opening-range breakout</div>
+</div><div class="score"><span>{html_lib.escape(badge)}</span><strong>{html_lib.escape(str(item.get('grade','')))}</strong></div></div>
 
+<div class="action-box"><div class="action-title">WHAT TO DO NOW</div>
+<div class="action-text">{html_lib.escape(str(item.get('recommendation','')))}</div></div>
+
+<div class="levels">
+<div><span>Opening range</span><strong>{money(item.get('opening_range_low'))} – {money(item.get('opening_range_high'))}</strong></div>
+<div><span>Entry trigger</span><strong>{money(item.get('trigger'))}</strong></div>
+<div><span>Do not chase beyond</span><strong>{money(item.get('maximum_entry'))}</strong></div>
+<div><span>Stop</span><strong>{money(item.get('stop'))}</strong></div>
+<div><span>Target 1 (1R)</span><strong>{money(item.get('target_1r'))}</strong></div>
+<div><span>Target 2 (2R)</span><strong>{money(item.get('target'))}</strong></div>
+</div>
+
+<div class="chart-wrap"><div class="chart-title">Morning price action — completed 5-minute candles</div>{candlestick_svg(item.get("opening_candles", []))}</div>
+{news_html(item)}
+
+<div class="metrics">
+<div><span>Latest price</span><strong>{money(item.get('current'))} at {item.get('current_time').strftime('%H:%M') if item.get('current_time') else '—'}</strong></div>
+<div><span>Close / VWAP</span><strong>{money(item.get('close'))} / {money(item.get('vwap'))}</strong></div>
+<div><span>Relative volume</span><strong>{volume_text}</strong></div>
+<div><span>Opening turnover</span><strong>£{item.get('turnover_gbp',0):,.0f}</strong></div>
+<div><span>Gap / move</span><strong>{item.get('gap_pct',0):+.2f}% / {item.get('move_pct',0):+.2f}%</strong></div>
+<div><span>Indicative size</span><strong>{item.get('shares',0)} shares</strong></div>
+</div>
+
+<details><summary>Why this setup is / isn’t ready</summary><div class="detail-grid">
+<div><h3>Supporting evidence</h3><ul>{why}</ul></div>
+<div><h3>Missing / failed conditions</h3><ul>{failed}</ul></div>
+</div></details></section>"""
 
 def rejected_row(item: dict[str, Any]) -> str:
     reason = "; ".join(item.get("failed", [])[:2]) or item.get(
@@ -758,16 +727,22 @@ def build_html(
     generated: dt.datetime,
     stage_name: str,
 ) -> str:
+    priority = {
+        "ENTER LONG": 5,
+        "ENTER SHORT": 5,
+        "READY — WAIT FOR BREAK": 4,
+        "WATCH": 2,
+        "DON'T CHASE": 1,
+        "FAILED SETUP": 0,
+        "NO TRADE": 0,
+        "DATA ONLY": 0,
+    }
+    grade_rank = {"A": 3, "B": 2, "WATCH": 1, "MISSED": 0, "NO TRADE": 0, "DATA ONLY": 0}
     recommended = sorted(
-        [
-            row
-            for row in results
-            if row["status"] in {"ACTIONABLE", "WAIT FOR BREAK"}
-            and row["score"] >= MIN_RECOMMENDATION_SCORE
-        ],
+        [row for row in results if priority.get(row.get("status",""), 0) >= 2],
         key=lambda row: (
-            1 if row["status"] == "ACTIONABLE" else 0,
-            row["score"],
+            priority.get(row.get("status",""), 0),
+            grade_rank.get(row.get("grade",""), 0),
         ),
         reverse=True,
     )[:MAX_RECOMMENDATIONS]
@@ -775,30 +750,25 @@ def build_html(
     rejected = [row for row in results if row not in recommended]
     rejected.sort(key=lambda row: row["score"], reverse=True)
 
-    actionable = [row for row in recommended if row["status"] == "ACTIONABLE"]
-    waiting = [row for row in recommended if row["status"] == "WAIT FOR BREAK"]
-    nap_epic = recommended[0]["epic"] if recommended else None
+    actionable = [row for row in recommended if str(row.get("status","")).startswith("ENTER ")]
+    waiting = [row for row in recommended if row.get("status") == "READY — WAIT FOR BREAK"]
+    nap_candidates = [row for row in actionable if row.get("grade") == "A"]
+    nap_epic = nap_candidates[0]["epic"] if nap_candidates else None
 
-    if actionable and waiting:
+    if actionable:
         decision = (
-            f"{len(actionable)} actionable and {len(waiting)} conditional setup"
-            f"{'s' if len(waiting) != 1 else ''} from the {stage_name.lower()}."
-        )
-    elif actionable:
-        decision = (
-            f"{len(actionable)} actionable trade"
-            f"{'s' if len(actionable) != 1 else ''} from the {stage_name.lower()}."
+            f"{len(actionable)} live opening-range breakout"
+            f"{'s' if len(actionable) != 1 else ''}. Follow the entry/stop rules shown below."
         )
     elif waiting:
         decision = (
-            f"{len(waiting)} valid conditional setup"
-            f"{'s' if len(waiting) != 1 else ''}; wait for the displayed trigger."
+            f"{len(waiting)} setup{'s' if len(waiting) != 1 else ''} ready, "
+            "but none has broken the 15-minute opening range yet."
         )
+    elif recommended:
+        decision = "No trade yet. The candidates below remain on watch, but confirmation is incomplete."
     else:
-        decision = (
-            f"NO TRADE — the {stage_name.lower()} found no actionable or valid "
-            "trigger-based long or short setup."
-        )
+        decision = "NO TRADE — no candidate currently meets the strategy conditions."
 
     cards = "".join(
         card(row, nap=(row["epic"] == nap_epic))
@@ -812,13 +782,13 @@ def build_html(
     ).isoformat()
 
     template = Template("""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE 350 08:05 breakout trades</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>FTSE 350 15-minute opening-range strategy</title>
 <style>
 :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:$INK;color:$PAPER;font-family:Arial,sans-serif}
 .wrap{max-width:920px;margin:auto;padding:22px 14px 56px}a{color:$BRASS}.header{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid $HAIRLINE;padding-bottom:16px}
 h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:$SALMON;font-size:12px;text-transform:uppercase;letter-spacing:.09em}
 .time,.pattern,.name,.footer{color:$MUTED;font-size:12px}.decision,.pick,.rejected,.expired{background:$PANEL;border:1px solid $HAIRLINE;border-radius:9px;padding:15px;margin:14px 0}
-.decision strong{color:$BRASS}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}
+.decision strong{color:$BRASS}.action-box{background:#12161F;border:1px solid $BRASS;border-radius:7px;padding:12px;margin:12px 0}.action-title{font-size:10px;color:$BRASS;letter-spacing:.08em;text-transform:uppercase;margin-bottom:5px}.action-text{font-size:14px;line-height:1.5}.levels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:12px 0}.levels div{background:#12161F;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}.levels span{display:block;color:$MUTED;font-size:10px;margin-bottom:4px}.levels strong{font-size:13px}.pick-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.epic{color:$BRASS;font-size:19px}.name{margin-left:8px}
 .score{display:flex;flex-direction:column;text-align:right;font-size:13px;font-weight:700}.chart-wrap{margin:12px 0;background:#12161F;border:1px solid #2C333D;border-radius:7px;padding:10px}.chart-title{font-size:11px;color:#8B92A0;margin-bottom:5px}.mini-candles{width:100%;height:150px;display:block}.empty-chart{color:#8B92A0;font-size:12px;padding:20px;text-align:center}.news-box{margin:12px 0;background:#12161F;border:1px solid #2C333D;border-radius:7px;padding:10px 12px}.news-heading{font-size:11px;color:#C9A24B;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}.news-list{margin:0;padding-left:18px}.news-list li{margin:5px 0;color:#ECE7DA;font-size:12px;line-height:1.35}.news-list a{color:#ECE7DA;text-decoration:none}.news-meta,.news-empty{font-size:10px;color:#8B92A0;margin-top:2px}.score strong{font-size:22px;margin-top:3px}.recommendation{font-size:14px;line-height:1.5}
 .metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin-top:12px}.metrics div{background:$INK;border:1px solid $HAIRLINE;border-radius:6px;padding:9px}
 .metrics span{display:block;color:$MUTED;font-size:11px;margin-bottom:4px}.metrics strong{font-size:12px;line-height:1.35}details{margin-top:12px}summary{cursor:pointer;color:$BRASS;font-size:13px}
@@ -826,12 +796,12 @@ h1{margin:4px 0 0;font-size:27px}h3{font-size:13px;margin:0 0 5px}.kicker{color:
 .expired{display:none;border-color:$SALMON}.expired h2{color:$SALMON;margin-top:0}.footer{line-height:1.6;border-top:1px solid $HAIRLINE;padding-top:14px;margin-top:20px}
 @media(max-width:760px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:1fr}h1{font-size:22px}}
 </style></head><body><main class="wrap">
-<div class="header"><div><div class="kicker">FTSE 350 ex trusts · 08:05 long and short breakout strategies</div><h1>$STAGE</h1></div><div class="time">$DATE<br>$TIME</div></div>
+<div class="header"><div><div class="kicker">FTSE 350 ex trusts · 15-minute opening-range strategy</div><h1>$STAGE</h1></div><div class="time">$DATE<br>$TIME</div></div>
 <div class="decision"><strong>$DECISION</strong> <a href="index.html">Daily watchlist</a> · <a href="backtest.html">Backtest</a></div>
 <div id="expired-content" class="expired"><h2>Past the 09:30 cutoff</h2><p>The opening setups below are retained for review only. Do not use their levels now.</p></div>
 <div id="live-content">$CARDS
 <details class="rejected"><summary>Other candidates assessed but not recommended</summary><ul>$REJECTED</ul></details></div>
-<p class="footer">The opening scan uses the first completed 08:00–08:05 five-minute bar. Longs require strength above the previous close and VWAP; shorts require weakness below both. Stops use the widest of price structure, 0.50× daily ATR and a 0.75% minimum distance; the 2R target is then calculated from trigger-to-stop risk. ACTIONABLE means the opening-range trigger has broken without being chased. WAIT FOR BREAK is conditional and must not be entered early.</p>
+<p class="footer">Strategy: no trade decision before 08:15. The first three completed five-minute candles define the 08:00–08:15 opening range. READY means conditions align but the range has not broken. ENTER LONG/SHORT appears only after a confirmed break. DON’T CHASE means price has travelled too far beyond the planned entry. Stops use the widest of opening-range structure, 0.50× daily ATR and a 0.75% minimum distance.</p>
 </main><script>
 (function(){const expiry=new Date('$EXPIRY');const expired=document.getElementById('expired-content');
 function enforce(){if(new Date()>=expiry){expired.style.display='block';document.querySelectorAll('.recommendation').forEach(function(el){const original=el.dataset.original||el.textContent;el.dataset.original=original;el.textContent='PAST 09:30 — Do not follow this recommendation now. Original assessment: '+original;});}}
