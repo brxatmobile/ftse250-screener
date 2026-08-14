@@ -1,4 +1,4 @@
-name: FTSE 30-Day Strategy Research
+name: FTSE Overnight Rank-1 Research
 
 on:
   workflow_dispatch:
@@ -16,14 +16,17 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Check out repository
+      - name: Check out main branch
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
 
-      - name: Confirm current research script
+      - name: Confirm overnight research script
         run: |
           test -f backtest_research.py
-          grep -q "FTSE350_ORB_RANK1_30DAY_RESEARCH_2026_08_11" backtest_research.py
-          echo "Current 30-day opening-range research script found"
+          grep -q "FTSE350_RANK1_CLOSE_TO_NEXT_DAY_1R_VS_2R_2026_08_14" backtest_research.py
+          echo "Correct overnight rank-1 research script found"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,25 +43,24 @@ jobs:
             pip install pandas numpy requests yfinance
           fi
 
-      - name: Run 30-day rank-1 strategy research
+      - name: Run overnight rank-1 research
         env:
-          SPREAD_BPS: ${{ vars.SPREAD_BPS }}
-          COMMISSION_PER_TRADE: ${{ vars.COMMISSION_PER_TRADE }}
+          ROUND_TRIP_COST_BPS: ${{ vars.ROUND_TRIP_COST_BPS }}
         run: |
           python -u ./backtest_research.py
 
       - name: Verify research output
         run: |
           test -s docs/backtest-research.html
-          grep -q "£30 rank-1 strategy" docs/backtest-research.html
-          grep -q "15-minute opening-range" docs/backtest-research.html
-          grep -q "Daily replay" docs/backtest-research.html
-          echo "30-day research report verified"
+          grep -q "£30 overnight rank-1 strategy" docs/backtest-research.html
+          grep -q "1R versus 2R" docs/backtest-research.html
+          grep -q "Avg move at open" docs/backtest-research.html
+          echo "Overnight rank-1 research report verified"
 
       - name: Publish research page
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docs/backtest-research.html
-          git commit -m "Update 30-day rank-1 strategy research" || echo "No research report changes"
-          git push
+          git commit -m "Update overnight rank-1 CFD research" || echo "No research report changes"
+          git push origin HEAD:main
