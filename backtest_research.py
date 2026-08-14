@@ -1,4 +1,4 @@
-# FILE_VERSION: FTSE350_RANK1_OVERNIGHT_RISK_FIX_2026_08_14
+# FILE_VERSION: FTSE350_RANK1_OVERNIGHT_LONG_SHORT_SPLIT_2026_08_14
 """
 Backtest the CURRENT screener's rank-1 candidate as an overnight CFD strategy.
 
@@ -176,8 +176,8 @@ def directional_return(direction: str, entry_gbx: float, price_gbx: float) -> fl
     if entry_gbx <= 0:
         return 0.0
     if direction == "Long":
-        return (price_gbx / entry_gbx - 1.0) * 100.0
-    return (entry_gbx / price_gbx - 1.0) * 100.0
+        return ((price_gbx - entry_gbx) / entry_gbx) * 100.0
+    return ((entry_gbx - price_gbx) / entry_gbx) * 100.0
 
 
 def pnl_from_prices(direction: str, entry_gbx: float, exit_gbx: float) -> float:
@@ -374,42 +374,150 @@ def fmt_price(value: float | None) -> str:
 
 
 def render(rows: list[dict[str, Any]], generated: str) -> str:
-    one = summary(rows, "one_r")
-    two = summary(rows, "two_r")
+    cost = NOTIONAL_GBP * ROUND_TRIP_COST_BPS / 10_000.0
+
+    # Convert the fixed-time directional returns into actual £ P/L on a £30 CFD.
+    for r in rows:
+        for suffix, pct_key in (
+            ("open", "open_return_pct"),
+            ("0805", "r0805_pct"),
+            ("0815", "r0815_pct"),
+            ("0930", "r0930_pct"),
+        ):
+            pct = r.get(pct_key)
+            r[f"{suffix}_net"] = (
+                NOTIONAL_GBP * float(pct) / 100.0 - cost
+                if pct is not None else 0.0
+            )
+
+    strategies = [
+        ("Open", "open_net"),
+        ("08:05", "0805_net"),
+        ("08:15", "0815_net"),
+        ("09:30", "0930_net"),
+        ("1R", "one_r_net"),
+        ("2R", "two_r_net"),
+    ]
+
+    def money_stats(group_rows: list[dict[str, Any]], key: str) -> dict[str, float]:
+        vals = [float(r.get(key, 0.0) or 0.0) for r in group_rows]
+        total = sum(vals)
+        wins = [v for v in vals if v > 0]
+        losses = [v for v in vals if v < 0]
+        gp = sum(wins)
+        gl = abs(sum(losses))
+        pf = gp / gl if gl > 0 else (float("inf") if gp > 0 else 0.0)
+
+        equity = 0.0
+        peak = 0.0
+        dd = 0.0
+        for v in vals:
+            equity += v
+            peak = max(peak, equity)
+            dd = min(dd, equity - peak)
+
+        return {
+            "trades": len(vals),
+            "pnl": total,
+            "avg": total / len(vals) if vals else 0.0,
+            "win_rate": len(wins) / len(vals) * 100 if vals else 0.0,
+            "pf": pf,
+            "dd": dd,
+        }
+
+    longs = [r for r in rows if r["direction"] == "Long"]
+    shorts = [r for r in rows if r["direction"] == "Short"]
+    groups = [("Combined", rows), ("LONG", longs), ("SHORT", shorts)]
+
+    all_stats = {
+        group_name: {
+            label: money_stats(group_rows, key)
+            for label, key in strategies
+        }
+        for group_name, group_rows in groups
+    }
+
+    def cls(value: float) -> str:
+        return "positive" if value >= 0 else "negative"
+
+    def pf_text(value: float) -> str:
+        return "∞" if math.isinf(value) else f"{value:.2f}"
+
+    def group_section(group_name: str, group_rows: list[dict[str, Any]]) -> str:
+        deployed = len(group_rows) * NOTIONAL_GBP
+        if group_rows:
+            best_label = max(
+                strategies,
+                key=lambda item: all_stats[group_name][item[0]]["pnl"],
+            )[0]
+            best_pnl = all_stats[group_name][best_label]["pnl"]
+        else:
+            best_label = "—"
+            best_pnl = 0.0
+
+        body = []
+        for label, _ in strategies:
+            s = all_stats[group_name][label]
+            return_on_stake = (s["pnl"] / deployed * 100.0) if deployed else 0.0
+            body.append(
+                "<tr>"
+                f"<td><strong>{label}</strong></td>"
+                f"<td>{s['trades']}</td>"
+                f"<td>£{deployed:,.2f}</td>"
+                f"<td class='{cls(s['pnl'])}'><strong>£{s['pnl']:+.2f}</strong></td>"
+                f"<td class='{cls(return_on_stake)}'>{return_on_stake:+.2f}%</td>"
+                f"<td class='{cls(s['avg'])}'>£{s['avg']:+.2f}</td>"
+                f"<td>{s['win_rate']:.1f}%</td>"
+                f"<td>{pf_text(s['pf'])}</td>"
+                f"<td class='negative'>£{s['dd']:.2f}</td>"
+                "</tr>"
+            )
+
+        return f"""
+        <section class="group-block">
+          <div class="group-head">
+            <div>
+              <div class="eyebrow">{group_name}</div>
+              <h2>{group_name} monetary performance</h2>
+            </div>
+            <div class="best">
+              <span>Best exit</span>
+              <strong>{best_label}</strong>
+              <b class="{cls(best_pnl)}">£{best_pnl:+.2f}</b>
+            </div>
+          </div>
+          <div class="money-strip">
+            <div><span>Trades</span><strong>{len(group_rows)}</strong></div>
+            <div><span>Stake per trade</span><strong>£{NOTIONAL_GBP:.2f}</strong></div>
+            <div><span>Total stake deployed</span><strong>£{deployed:,.2f}</strong></div>
+            <div><span>Best net gain/loss</span><strong class="{cls(best_pnl)}">£{best_pnl:+.2f}</strong></div>
+          </div>
+          <div class="table-wrap">
+            <table class="summary-table">
+              <thead><tr>
+                <th>Exit</th><th>Trades</th><th>Stake deployed</th>
+                <th>Net gain/loss</th><th>Return on stake</th>
+                <th>Avg £/trade</th><th>Win rate</th>
+                <th>Profit factor</th><th>Max drawdown</th>
+              </tr></thead>
+              <tbody>{''.join(body)}</tbody>
+            </table>
+          </div>
+        </section>
+        """
+
+    combined_best = max(
+        strategies,
+        key=lambda item: all_stats["Combined"][item[0]]["pnl"]
+    )[0]
+    combined_best_pnl = all_stats["Combined"][combined_best]["pnl"]
 
     open_values = [r["open_return_pct"] for r in rows if r["open_return_pct"] is not None]
-    v0805 = [r["r0805_pct"] for r in rows if r["r0805_pct"] is not None]
-    v0815 = [r["r0815_pct"] for r in rows if r["r0815_pct"] is not None]
-    v0930 = [r["r0930_pct"] for r in rows if r["r0930_pct"] is not None]
+    avg_open = float(np.mean(open_values)) if open_values else 0.0
+    median_open = float(np.median(open_values)) if open_values else 0.0
 
-    def mean(values):
-        return float(np.mean(values)) if values else 0.0
-
-    def median(values):
-        return float(np.median(values)) if values else 0.0
-
-    pf1 = "∞" if math.isinf(one["pf"]) else f"{one['pf']:.2f}"
-    pf2 = "∞" if math.isinf(two["pf"]) else f"{two['pf']:.2f}"
-
-    better = "1R" if one["pnl"] > two["pnl"] else ("2R" if two["pnl"] > one["pnl"] else "Tie")
-
-    cumulative1 = 0.0
-    cumulative2 = 0.0
     html_rows = []
     for r in reversed(rows):
-        # cumulative shown chronologically requires precompute below
-        pass
-
-    c1 = c2 = 0.0
-    for r in rows:
-        c1 += r["one_r_net"]
-        c2 += r["two_r_net"]
-        r["cum_1r"] = c1
-        r["cum_2r"] = c2
-
-    for r in reversed(rows):
-        cls1 = "positive" if r["one_r_net"] > 0 else ("negative" if r["one_r_net"] < 0 else "neutral")
-        cls2 = "positive" if r["two_r_net"] > 0 else ("negative" if r["two_r_net"] < 0 else "neutral")
         html_rows.append(
             "<tr>"
             f"<td>{r['signal_date'].strftime('%d %b')}</td>"
@@ -417,96 +525,84 @@ def render(rows: list[dict[str, Any]], generated: str) -> str:
             f"<td><strong>{html_lib.escape(r['epic'])}</strong><br><span class='muted'>{html_lib.escape(r['name'])}</span></td>"
             f"<td>{html_lib.escape(r['direction'])}</td>"
             f"<td>{fmt_price(r['entry'])}</td>"
-            f"<td>{fmt_pct(r['open_return_pct'])}</td>"
-            f"<td>{fmt_pct(r['r0805_pct'])}</td>"
-            f"<td>{fmt_pct(r['r0815_pct'])}</td>"
-            f"<td>{fmt_pct(r['r0930_pct'])}</td>"
+            f"<td>{fmt_pct(r['open_return_pct'])}</td><td class='{cls(r['open_net'])}'>£{r['open_net']:+.2f}</td>"
+            f"<td>{fmt_pct(r['r0805_pct'])}</td><td class='{cls(r['0805_net'])}'>£{r['0805_net']:+.2f}</td>"
+            f"<td>{fmt_pct(r['r0815_pct'])}</td><td class='{cls(r['0815_net'])}'>£{r['0815_net']:+.2f}</td>"
+            f"<td>{fmt_pct(r['r0930_pct'])}</td><td class='{cls(r['0930_net'])}'>£{r['0930_net']:+.2f}</td>"
             f"<td>{fmt_price(r['stop'])}</td>"
             f"<td>{fmt_price(r['target_1r'])}</td>"
             f"<td>{html_lib.escape(r['one_r_outcome'])}</td>"
-            f"<td class='{cls1}'>£{r['one_r_net']:+.2f}</td>"
+            f"<td class='{cls(r['one_r_net'])}'>£{r['one_r_net']:+.2f}</td>"
             f"<td>{fmt_price(r['target_2r'])}</td>"
             f"<td>{html_lib.escape(r['two_r_outcome'])}</td>"
-            f"<td class='{cls2}'>£{r['two_r_net']:+.2f}</td>"
-            f"<td class='{cls1}'>£{r['cum_1r']:+.2f}</td>"
-            f"<td class='{cls2}'>£{r['cum_2r']:+.2f}</td>"
+            f"<td class='{cls(r['two_r_net'])}'>£{r['two_r_net']:+.2f}</td>"
             "</tr>"
         )
 
+    sections = "".join(group_section(name, group_rows) for name, group_rows in groups)
+
     return f"""<!doctype html>
-<html lang="en">
-<head>
+<html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FTSE 350 · Overnight rank-1 CFD research</title>
+<title>FTSE 350 · Overnight LONG vs SHORT research</title>
 <style>
-:root{{--ink:{INK};--panel:{PANEL};--line:{HAIRLINE};--brass:{BRASS};--salmon:{SALMON};--green:{BULL};--red:{BEAR};--paper:{PAPER};--muted:{MUTED}}}
-*{{box-sizing:border-box}} body{{margin:0;background:var(--ink);color:var(--paper);font-family:Arial,sans-serif}}
-.wrap{{max-width:1300px;margin:auto;padding:28px 18px 60px}}
-nav{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}} nav a{{color:var(--paper);text-decoration:none;border:1px solid var(--line);padding:8px 12px;border-radius:999px;font-size:13px}} nav a.active{{color:var(--brass);border-color:var(--brass)}}
-h1{{font-size:28px;margin:5px 0}} h2{{font-size:18px;margin:26px 0 10px}} .sub,.note,.muted{{color:var(--muted)}} .sub{{font-size:12px;line-height:1.55}}
-.callout{{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px;margin:18px 0;line-height:1.6;font-size:13px}} .callout strong{{color:var(--brass)}}
-.grid{{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;margin:16px 0}}
-.stat{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}}
-.label{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}} .value{{font-size:19px;margin-top:5px}}
-.compare{{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}}
-.policy{{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:16px}} .policy h3{{margin:0 0 12px;color:var(--brass)}} .policy-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}}
-.table-wrap{{overflow-x:auto;border:1px solid var(--line);border-radius:8px;margin-top:14px}}
-table{{width:100%;border-collapse:collapse;min-width:1650px;background:var(--panel)}} th,td{{padding:8px 9px;border-bottom:1px solid var(--line);font-size:11px;text-align:right;white-space:nowrap}} th{{color:var(--muted);font-size:9px;text-transform:uppercase}} th:nth-child(1),td:nth-child(1),th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3),th:nth-child(12),td:nth-child(12),th:nth-child(15),td:nth-child(15){{text-align:left}}
-.positive{{color:var(--green)}} .negative{{color:var(--red)}} .neutral{{color:var(--muted)}}
-@media(max-width:800px){{.grid{{grid-template-columns:repeat(2,minmax(0,1fr))}} .compare{{grid-template-columns:1fr}}}}
-</style>
-</head>
-<body><main class="wrap">
+:root{{--ink:{INK};--panel:{PANEL};--line:{HAIRLINE};--brass:{BRASS};--green:{BULL};--red:{BEAR};--paper:{PAPER};--muted:{MUTED}}}
+*{{box-sizing:border-box}}body{{margin:0;background:var(--ink);color:var(--paper);font-family:Arial,sans-serif}}
+.wrap{{max-width:1420px;margin:auto;padding:28px 18px 60px}}
+nav{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}}
+nav a{{color:var(--paper);text-decoration:none;border:1px solid var(--line);padding:8px 12px;border-radius:999px;font-size:13px}}
+nav a.active{{color:var(--brass);border-color:var(--brass)}}
+h1{{font-size:29px;margin:5px 0}}h2{{font-size:20px;margin:0}}
+.sub,.note,.muted{{color:var(--muted)}}.sub{{font-size:12px}}
+.callout{{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px;margin:18px 0;font-size:13px;line-height:1.6}}
+.hero{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:16px 0 28px}}
+.hero>div,.money-strip>div,.best{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}}
+.hero span,.money-strip span,.best span{{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}}
+.hero strong,.money-strip strong{{display:block;font-size:19px;margin-top:5px}}
+.group-block{{margin:30px 0 38px}}
+.group-head{{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;margin-bottom:10px}}
+.eyebrow{{color:var(--brass);font-size:10px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:5px}}
+.best{{min-width:180px;text-align:right}}.best strong{{display:block;font-size:18px;margin:4px 0}}.best b{{font-size:17px}}
+.money-strip{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:10px 0}}
+.table-wrap{{overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:12px}}
+table{{width:100%;border-collapse:collapse;background:var(--panel)}}.summary-table{{min-width:1000px}}.daily-table{{min-width:1780px}}
+th,td{{padding:9px;border-bottom:1px solid var(--line);font-size:11px;text-align:right;white-space:nowrap}}
+th{{font-size:9px;color:var(--muted);text-transform:uppercase}}
+.summary-table th:first-child,.summary-table td:first-child{{text-align:left}}
+.daily-table th:nth-child(-n+4),.daily-table td:nth-child(-n+4),
+.daily-table th:nth-child(16),.daily-table td:nth-child(16),
+.daily-table th:nth-child(19),.daily-table td:nth-child(19){{text-align:left}}
+.positive{{color:var(--green)}}.negative{{color:var(--red)}}
+@media(max-width:900px){{
+.hero{{grid-template-columns:repeat(2,1fr)}}.money-strip{{grid-template-columns:repeat(2,1fr)}}
+.group-head{{align-items:flex-start;flex-direction:column}}.best{{width:100%;text-align:left}}
+}}
+</style></head><body><main class="wrap">
 <nav><a href="index.html">Daily screener</a><a href="intraday.html">Intraday</a><a href="backtest.html">Backtest</a><a class="active" href="backtest-research.html">Research</a></nav>
-<div class="sub">FTSE 350 ex trusts · rank-1 close-to-next-session CFD replay</div>
-<h1>£30 overnight rank-1 strategy · 1R versus 2R</h1>
+<div class="sub">FTSE 350 · rank-1 overnight CFD replay</div>
+<h1>£30 overnight strategy · LONG versus SHORT</h1>
 <div class="sub">Generated {generated}</div>
-
-<div class="callout"><strong>Exact hypothesis:</strong> use the current screener unchanged, take its rank-1 LONG or SHORT candidate at the end of the signal day, enter a £30 CFD at the closing-price proxy, hold overnight, and manage the following session using an overnight stop of 0.50× ATR(14), with a 0.75% minimum distance. This page independently tests taking profit at 1R and 2R, and reports the opening move separately.</div>
-
-<div class="grid">
-<div class="stat"><div class="label">Signal days</div><div class="value">{len(rows)}</div></div>
-<div class="stat"><div class="label">Avg move at open</div><div class="value {'positive' if mean(open_values)>=0 else 'negative'}">{mean(open_values):+.2f}%</div></div>
-<div class="stat"><div class="label">Median move at open</div><div class="value {'positive' if median(open_values)>=0 else 'negative'}">{median(open_values):+.2f}%</div></div>
-<div class="stat"><div class="label">Avg by 08:05</div><div class="value {'positive' if mean(v0805)>=0 else 'negative'}">{mean(v0805):+.2f}%</div></div>
-<div class="stat"><div class="label">Avg by 08:15</div><div class="value {'positive' if mean(v0815)>=0 else 'negative'}">{mean(v0815):+.2f}%</div></div>
-<div class="stat"><div class="label">Avg by 09:30</div><div class="value {'positive' if mean(v0930)>=0 else 'negative'}">{mean(v0930):+.2f}%</div></div>
-<div class="stat"><div class="label">Better exit in sample</div><div class="value">{better}</div></div>
+<div class="callout"><strong>Money-first comparison:</strong> every signal represents one £30 CFD position. The report separates LONG and SHORT recommendations and shows the actual simulated <strong>£ gain or loss</strong> for selling at the open, 08:05, 08:15, 09:30, 1R or 2R. “Total stake deployed” is £30 × number of trades; it is not a portfolio balance.</div>
+<div class="hero">
+<div><span>Total trades</span><strong>{len(rows)}</strong></div>
+<div><span>LONG trades</span><strong>{len(longs)}</strong></div>
+<div><span>SHORT trades</span><strong>{len(shorts)}</strong></div>
+<div><span>Average directional open</span><strong class="{cls(avg_open)}">{avg_open:+.2f}%</strong></div>
+<div><span>Median directional open</span><strong class="{cls(median_open)}">{median_open:+.2f}%</strong></div>
+<div><span>Best combined exit</span><strong>{combined_best}<br><span class="{cls(combined_best_pnl)}">£{combined_best_pnl:+.2f}</span></strong></div>
 </div>
-
-<div class="compare">
-<section class="policy"><h3>1R target</h3><div class="policy-grid">
-<div><div class="label">Net P/L</div><div class="value {'positive' if one['pnl']>=0 else 'negative'}">£{one['pnl']:+.2f}</div></div>
-<div><div class="label">Win rate</div><div class="value">{one['win_rate']:.1f}%</div></div>
-<div><div class="label">Profit factor</div><div class="value">{pf1}</div></div>
-<div><div class="label">Average/trade</div><div class="value">£{one['avg']:+.2f}</div></div>
-<div><div class="label">Max drawdown</div><div class="value negative">£{one['dd']:.2f}</div></div>
-<div><div class="label">Trades</div><div class="value">{one['trades']}</div></div>
-</div></section>
-
-<section class="policy"><h3>2R target</h3><div class="policy-grid">
-<div><div class="label">Net P/L</div><div class="value {'positive' if two['pnl']>=0 else 'negative'}">£{two['pnl']:+.2f}</div></div>
-<div><div class="label">Win rate</div><div class="value">{two['win_rate']:.1f}%</div></div>
-<div><div class="label">Profit factor</div><div class="value">{pf2}</div></div>
-<div><div class="label">Average/trade</div><div class="value">£{two['avg']:+.2f}</div></div>
-<div><div class="label">Max drawdown</div><div class="value negative">£{two['dd']:.2f}</div></div>
-<div><div class="label">Trades</div><div class="value">{two['trades']}</div></div>
-</div></section>
-</div>
-
-<h2>Daily replay</h2>
-<div class="table-wrap"><table><thead><tr>
+{sections}
+<h2 style="margin-top:38px;">Individual £30 trades</h2>
+<div class="table-wrap"><table class="daily-table"><thead><tr>
 <th>Signal</th><th>Next day</th><th>Rank-1 stock</th><th>Bias</th><th>Entry</th>
-<th>Open</th><th>08:05</th><th>08:15</th><th>09:30</th><th>Stop</th>
-<th>1R</th><th>1R outcome</th><th>1R £</th>
-<th>2R</th><th>2R outcome</th><th>2R £</th><th>Cum 1R</th><th>Cum 2R</th>
+<th>Open %</th><th>Open £</th><th>08:05 %</th><th>08:05 £</th>
+<th>08:15 %</th><th>08:15 £</th><th>09:30 %</th><th>09:30 £</th>
+<th>Stop</th><th>1R</th><th>1R outcome</th><th>1R £</th>
+<th>2R</th><th>2R outcome</th><th>2R £</th>
 </tr></thead><tbody>{''.join(html_rows)}</tbody></table></div>
-
-<p class="note"><strong>Close-entry proxy:</strong> the selection uses the completed signal-day candle and its closing price. Your intended real execution would be shortly before 16:30, so the backtest cannot perfectly reproduce the final few minutes or closing auction. A materially good result should therefore be confirmed over a longer sample before relying on it.</p>
-<p class="note"><strong>CFD costs:</strong> results deduct {ROUND_TRIP_COST_BPS:.0f} bps from each £30 trade as a configurable execution-cost proxy. Broker-specific overnight financing is not included unless you incorporate it into that cost assumption.</p>
-<p class="note">If the next session gaps through the stop, the model exits at the opening price rather than the stop level. When a single five-minute candle touches both stop and target, the stop is assumed first.</p>
+<p class="note"><strong>Entry limitation:</strong> the completed daily candle recreates the ranking and its close is the entry proxy. A real 16:20–16:25 entry occurs before the official close, so this is not a perfect point-in-time reconstruction.</p>
+<p class="note">Each strategy deducts {ROUND_TRIP_COST_BPS:.0f} bps from each £30 trade as the generic execution-cost proxy. Broker-specific overnight financing is not separately modelled.</p>
 </main></body></html>"""
-
 
 def main() -> int:
     print("Fetching FTSE 350 operating-company universe...")
