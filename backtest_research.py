@@ -1,4 +1,4 @@
-# FILE_VERSION: FTSE350_RANK1_CLOSE_TO_NEXT_DAY_1R_VS_2R_2026_08_14
+# FILE_VERSION: FTSE350_RANK1_OVERNIGHT_RISK_FIX_2026_08_14
 """
 Backtest the CURRENT screener's rank-1 candidate as an overnight CFD strategy.
 
@@ -66,6 +66,8 @@ OUTPUT_PATH = Path(__file__).resolve().parent / "docs" / "backtest-research.html
 DAYS = 30
 NOTIONAL_GBP = 30.0
 ROUND_TRIP_COST_BPS = float(os.environ.get("ROUND_TRIP_COST_BPS") or 20.0)
+ATR_STOP_MULTIPLIER = float(os.environ.get("OVERNIGHT_ATR_MULTIPLIER") or 0.50)
+MIN_STOP_PCT = float(os.environ.get("OVERNIGHT_MIN_STOP_PCT") or 0.75)
 
 INK = "#12161F"
 PANEL = "#1B2129"
@@ -189,6 +191,23 @@ def pnl_from_prices(direction: str, entry_gbx: float, exit_gbx: float) -> float:
     return units * (entry_gbp - exit_gbp)
 
 
+def atr14_as_of(frame: pd.DataFrame, as_of_date: dt.date) -> float | None:
+    hist = frame[pd.DatetimeIndex(frame.index).date <= as_of_date].copy()
+    if len(hist) < 15:
+        return None
+    prev_close = hist["Close"].shift(1)
+    tr = pd.concat(
+        [
+            hist["High"] - hist["Low"],
+            (hist["High"] - prev_close).abs(),
+            (hist["Low"] - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    value = float(tr.tail(14).mean())
+    return value if math.isfinite(value) and value > 0 else None
+
+
 def simulate_policy(
     day: pd.DataFrame,
     direction: str,
@@ -197,10 +216,18 @@ def simulate_policy(
     target: float,
 ) -> dict[str, Any]:
     """
-    Trade is already open from previous close. Evaluate from the next session's
-    first 5-minute bar. Same-bar stop+target ambiguity is resolved conservatively
-    as STOP first.
+    Trade is open from the previous close. If the market gaps through the stop,
+    use the opening price rather than pretending the stop filled at its level.
     """
+    if day.empty:
+        return {"exit": None, "outcome": "NO DATA"}
+
+    opening = float(day.iloc[0]["Open"])
+    if direction == "Long" and opening <= stop:
+        return {"exit": opening, "outcome": "GAP STOP"}
+    if direction == "Short" and opening >= stop:
+        return {"exit": opening, "outcome": "GAP STOP"}
+
     for _, bar in day.iterrows():
         high = float(bar["High"])
         low = float(bar["Low"])
@@ -227,14 +254,22 @@ def simulate_day(
     signal_date: dt.date,
     trade_date: dt.date,
     intraday: pd.DataFrame,
+    daily_frame: pd.DataFrame,
 ) -> dict[str, Any]:
     direction = str(pick["direction"]).title()
     entry = float(pick["entry"])
-    stop = float(pick["stop"])
-    risk = float(pick["risk_per_share"])
 
-    target_1r = entry + risk if direction == "Long" else entry - risk
-    target_2r = entry + 2.0 * risk if direction == "Long" else entry - 2.0 * risk
+    atr = atr14_as_of(daily_frame, signal_date)
+    risk = max((atr or 0.0) * ATR_STOP_MULTIPLIER, entry * MIN_STOP_PCT / 100.0)
+
+    if direction == "Long":
+        stop = entry - risk
+        target_1r = entry + risk
+        target_2r = entry + 2.0 * risk
+    else:
+        stop = entry + risk
+        target_1r = entry - risk
+        target_2r = entry - 2.0 * risk
 
     result: dict[str, Any] = {
         "signal_date": signal_date,
@@ -246,6 +281,7 @@ def simulate_day(
         "entry": entry,
         "stop": stop,
         "risk": risk,
+        "atr14": atr,
         "target_1r": target_1r,
         "target_2r": target_2r,
         "open_return_pct": None,
@@ -284,8 +320,8 @@ def simulate_day(
 
     cost = NOTIONAL_GBP * ROUND_TRIP_COST_BPS / 10_000.0
 
-    gross1 = pnl_from_prices(direction, entry, float(policy1["exit"]))
-    gross2 = pnl_from_prices(direction, entry, float(policy2["exit"]))
+    gross1 = pnl_from_prices(direction, entry, float(policy1["exit"])) if policy1["exit"] is not None else 0.0
+    gross2 = pnl_from_prices(direction, entry, float(policy2["exit"])) if policy2["exit"] is not None else 0.0
 
     result.update({
         "one_r_outcome": policy1["outcome"],
@@ -349,6 +385,9 @@ def render(rows: list[dict[str, Any]], generated: str) -> str:
     def mean(values):
         return float(np.mean(values)) if values else 0.0
 
+    def median(values):
+        return float(np.median(values)) if values else 0.0
+
     pf1 = "∞" if math.isinf(one["pf"]) else f"{one['pf']:.2f}"
     pf2 = "∞" if math.isinf(two["pf"]) else f"{two['pf']:.2f}"
 
@@ -406,7 +445,7 @@ def render(rows: list[dict[str, Any]], generated: str) -> str:
 nav{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}} nav a{{color:var(--paper);text-decoration:none;border:1px solid var(--line);padding:8px 12px;border-radius:999px;font-size:13px}} nav a.active{{color:var(--brass);border-color:var(--brass)}}
 h1{{font-size:28px;margin:5px 0}} h2{{font-size:18px;margin:26px 0 10px}} .sub,.note,.muted{{color:var(--muted)}} .sub{{font-size:12px;line-height:1.55}}
 .callout{{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px;margin:18px 0;line-height:1.6;font-size:13px}} .callout strong{{color:var(--brass)}}
-.grid{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:16px 0}}
+.grid{{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px;margin:16px 0}}
 .stat{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}}
 .label{{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.04em}} .value{{font-size:19px;margin-top:5px}}
 .compare{{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}}
@@ -423,11 +462,12 @@ table{{width:100%;border-collapse:collapse;min-width:1650px;background:var(--pan
 <h1>£30 overnight rank-1 strategy · 1R versus 2R</h1>
 <div class="sub">Generated {generated}</div>
 
-<div class="callout"><strong>Exact hypothesis:</strong> use the current screener unchanged, take its rank-1 LONG or SHORT candidate at the end of the signal day, enter a £30 CFD at the closing-price proxy, hold overnight, and manage the following session using the screener's own structural stop. This page independently tests taking profit at 1R and 2R.</div>
+<div class="callout"><strong>Exact hypothesis:</strong> use the current screener unchanged, take its rank-1 LONG or SHORT candidate at the end of the signal day, enter a £30 CFD at the closing-price proxy, hold overnight, and manage the following session using an overnight stop of 0.50× ATR(14), with a 0.75% minimum distance. This page independently tests taking profit at 1R and 2R, and reports the opening move separately.</div>
 
 <div class="grid">
 <div class="stat"><div class="label">Signal days</div><div class="value">{len(rows)}</div></div>
 <div class="stat"><div class="label">Avg move at open</div><div class="value {'positive' if mean(open_values)>=0 else 'negative'}">{mean(open_values):+.2f}%</div></div>
+<div class="stat"><div class="label">Median move at open</div><div class="value {'positive' if median(open_values)>=0 else 'negative'}">{median(open_values):+.2f}%</div></div>
 <div class="stat"><div class="label">Avg by 08:05</div><div class="value {'positive' if mean(v0805)>=0 else 'negative'}">{mean(v0805):+.2f}%</div></div>
 <div class="stat"><div class="label">Avg by 08:15</div><div class="value {'positive' if mean(v0815)>=0 else 'negative'}">{mean(v0815):+.2f}%</div></div>
 <div class="stat"><div class="label">Avg by 09:30</div><div class="value {'positive' if mean(v0930)>=0 else 'negative'}">{mean(v0930):+.2f}%</div></div>
@@ -464,7 +504,7 @@ table{{width:100%;border-collapse:collapse;min-width:1650px;background:var(--pan
 
 <p class="note"><strong>Close-entry proxy:</strong> the selection uses the completed signal-day candle and its closing price. Your intended real execution would be shortly before 16:30, so the backtest cannot perfectly reproduce the final few minutes or closing auction. A materially good result should therefore be confirmed over a longer sample before relying on it.</p>
 <p class="note"><strong>CFD costs:</strong> results deduct {ROUND_TRIP_COST_BPS:.0f} bps from each £30 trade as a configurable execution-cost proxy. Broker-specific overnight financing is not included unless you incorporate it into that cost assumption.</p>
-<p class="note">When a single five-minute candle touches both a stop and target, this research assumes the stop was hit first. That is deliberately conservative.</p>
+<p class="note">If the next session gaps through the stop, the model exits at the opening price rather than the stop level. When a single five-minute candle touches both stop and target, the stop is assumed first.</p>
 </main></body></html>"""
 
 
@@ -514,7 +554,9 @@ def main() -> int:
 
     print(f"Downloading 5-minute next-session data for {len(unique_tickers)} unique picks...")
     intraday_cache: dict[str, pd.DataFrame] = {}
+    daily_cache: dict[str, pd.DataFrame] = {}
     for ticker in unique_tickers:
+        daily_cache[ticker] = ticker_frame(daily_data, ticker)
         intraday_cache[ticker] = london_intraday(
             yf.download(
                 ticker,
@@ -533,7 +575,7 @@ def main() -> int:
             continue
         ticker = pick["yahoo_ticker"]
         print(f"Replaying {signal_date} -> {trade_date}: {pick['epic']} {pick['direction']}")
-        rows.append(simulate_day(pick, signal_date, trade_date, intraday_cache[ticker]))
+        rows.append(simulate_day(pick, signal_date, trade_date, intraday_cache[ticker], daily_cache[ticker]))
 
     if not rows:
         raise RuntimeError("No historical rank-1 trades could be reconstructed.")
